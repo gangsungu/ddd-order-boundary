@@ -9,11 +9,13 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 @Entity
 @Table(name = "products")
 @NoArgsConstructor
 @Getter
+@Setter
 public class Product extends BaseEntity {
 
     @Column(nullable = false, length = 100)

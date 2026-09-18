@@ -26,7 +26,10 @@ public class ProductService {
         Product product = Product.builder()
             .name(productInfo.name())
             .description(productInfo.description())
-            .price(productInfo.price());
+            .price(productInfo.price())
+            .build();
+
+        productRepository.save(product);
     }
 
     private void checkDuplicate(ProductInfo productInfo) {
@@ -35,5 +38,23 @@ public class ProductService {
         if(count > 0) {
             throw new RuntimeException("이미 등록된 상품입니다.");
         }
+    }
+
+    @Transactional
+    public void update(Long id, ProductInfo productInfo) {
+        Product product = productRepository.findById(id).orElseThrow(() -> new RuntimeException("상품 정보를 찾을 수 없습니다."));
+
+        product.setName(productInfo.name());
+        product.setDescription(productInfo.description());
+        product.setPrice(productInfo.price());
+    }
+
+    @Transactional
+    public void delete(Long id) {
+        if(!productRepository.existsById(id)) {
+            throw new RuntimeException("상품 정보를 찾을 수 없습니다.");
+        }
+
+        productRepository.deleteById(id);
     }
 }
