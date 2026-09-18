@@ -4,11 +4,11 @@ import com.roykhan.dddorderboundary.domain.product.Product;
 import com.roykhan.dddorderboundary.domain.product.dto.ProductInfo;
 import com.roykhan.dddorderboundary.domain.product.repository.ProductRepository;
 import jakarta.transaction.Transactional;
+import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
-@Transactional
 @AllArgsConstructor
 public class ProductService {
 
@@ -17,5 +17,23 @@ public class ProductService {
     public ProductInfo findById(Long id) {
         Product product = productRepository.findById(id).orElseThrow(() -> new IllegalArgumentException("제품을 찾을 수 없습니다."));
         return ProductInfo.from(product);
+    }
+
+    @Transactional
+    public void register(@Valid ProductInfo productInfo) {
+        checkDuplicate(productInfo);
+
+        Product product = Product.builder()
+            .name(productInfo.name())
+            .description(productInfo.description())
+            .price(productInfo.price());
+    }
+
+    private void checkDuplicate(ProductInfo productInfo) {
+        int count = productRepository.checkDuplicateProduct(productInfo);
+
+        if(count > 0) {
+            throw new RuntimeException("이미 등록된 상품입니다.");
+        }
     }
 }
