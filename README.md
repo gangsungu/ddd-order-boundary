@@ -26,9 +26,33 @@
 |---|---|
 | Language | Java 21 |
 | Framework | Spring Boot 4.1.1 (Web, Data JPA) |
-| Database | PostgreSQL |
+| Database | H2 (개발·테스트 기본) · PostgreSQL (`postgres` 프로필) |
 | Build | Gradle 9.7.1 (Wrapper) |
 | 기타 | Lombok |
+
+---
+
+## 실행 방법
+
+별도 DB 설치 없이 클론 후 바로 실행됩니다. 데이터는 `./data/devdb` 파일에 저장되어 재시작해도 유지되고, H2 콘솔은 <http://localhost:8080/h2-console> 에서 열 수 있습니다.
+
+```bash
+./gradlew bootRun
+```
+
+PostgreSQL 로 띄우려면 프로필을 전환합니다. 접속 정보는 `.env` 또는 환경 변수(`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`)로 덮어쓸 수 있습니다.
+
+```bash
+./gradlew bootRun --args='--spring.profiles.active=postgres'
+```
+
+| 설정 파일 | 용도 |
+|---|---|
+| `src/main/resources/application.yml` | H2 파일 DB (기본), `ddl-auto: update` |
+| `src/main/resources/application-postgres.yml` | PostgreSQL, `ddl-auto: none` |
+| `src/test/resources/application.yml` | H2 인메모리, 테스트 전용 (개발 DB와 격리) |
+
+H2 는 `MODE=PostgreSQL` 호환 모드로 동작합니다. 3주차 분산 시스템 단계에서 실제 PostgreSQL 이 필요해지면 프로필만 바꾸면 됩니다.
 
 ---
 
