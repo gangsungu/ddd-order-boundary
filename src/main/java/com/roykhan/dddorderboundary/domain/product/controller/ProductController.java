@@ -2,6 +2,7 @@ package com.roykhan.dddorderboundary.domain.product.controller;
 
 import com.roykhan.dddorderboundary.common.response.ApiResponse;
 import com.roykhan.dddorderboundary.domain.product.dto.ProductInfo;
+import com.roykhan.dddorderboundary.domain.product.dto.ProductRegisterRequest;
 import com.roykhan.dddorderboundary.domain.product.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
@@ -36,16 +37,16 @@ public class ProductController {
     // 상품 등록
     @PostMapping("/product")
     @Operation(summary = "상품 등록", description = "상품 등록")
-    public ApiResponse<Void> createProduct(@Valid @RequestBody ProductInfo productInfo) {
-        productService.register(productInfo);
+    public ApiResponse<Void> createProduct(@Valid @RequestBody ProductRegisterRequest req) {
+        productService.register(req);
         return ApiResponse.success("상품이 등록되었습니다.");
     }
 
     // 상품 수정
     @PutMapping("/product/{id}")
     @Operation(summary = "상품 수정", description = "상품 수정")
-    public ApiResponse<Void> updateProduct(@PathVariable Long id, @RequestBody ProductInfo productInfo) {
-        productService.update(id, productInfo);
+    public ApiResponse<Void> updateProduct(@PathVariable Long id, @Valid @RequestBody ProductRegisterRequest req) {
+        productService.update(id, req);
         return ApiResponse.success("상품 정보가 수정되었습니다.");
     }
 

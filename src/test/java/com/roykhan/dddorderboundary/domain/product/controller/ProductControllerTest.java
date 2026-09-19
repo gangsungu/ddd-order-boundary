@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.roykhan.dddorderboundary.common.config.JacksonConfig;
 import com.roykhan.dddorderboundary.domain.product.dto.ProductInfo;
+import com.roykhan.dddorderboundary.domain.product.dto.ProductRegisterRequest;
 import com.roykhan.dddorderboundary.domain.product.service.ProductService;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.DisplayName;
@@ -69,9 +70,9 @@ class ProductControllerTest {
             .andExpect(jsonPath("$.message").value("상품이 등록되었습니다."))
             .andExpect(jsonPath("$.data").doesNotExist());
 
-        ArgumentCaptor<ProductInfo> captor = ArgumentCaptor.forClass(ProductInfo.class);
+        ArgumentCaptor<ProductRegisterRequest> captor = ArgumentCaptor.forClass(ProductRegisterRequest.class);
         verify(productService).register(captor.capture());
-        ProductInfo passed = captor.getValue();
+        ProductRegisterRequest passed = captor.getValue();
         assertThat(passed.name()).isEqualTo("마우스");
         assertThat(passed.description()).isEqualTo("무선 경량");
         assertThat(passed.price()).isEqualByComparingTo("89000.00");
@@ -94,7 +95,7 @@ class ProductControllerTest {
             .andExpect(jsonPath("$.message").value("상품 정보가 수정되었습니다."))
             .andExpect(jsonPath("$.data").doesNotExist());
 
-        ArgumentCaptor<ProductInfo> captor = ArgumentCaptor.forClass(ProductInfo.class);
+        ArgumentCaptor<ProductRegisterRequest> captor = ArgumentCaptor.forClass(ProductRegisterRequest.class);
         verify(productService).update(org.mockito.ArgumentMatchers.eq(7L), captor.capture());
         assertThat(captor.getValue().name()).isEqualTo("새 이름");
     }

@@ -8,8 +8,11 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.roykhan.dddorderboundary.common.exception.BusinessException;
+import com.roykhan.dddorderboundary.common.exception.ProductErrorCode;
 import com.roykhan.dddorderboundary.domain.product.Product;
 import com.roykhan.dddorderboundary.domain.product.dto.ProductInfo;
+import com.roykhan.dddorderboundary.domain.product.dto.ProductRegisterRequest;
 import com.roykhan.dddorderboundary.domain.product.repository.ProductRepository;
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -47,6 +50,10 @@ class ProductServiceTest {
         return product;
     }
 
+    private static ProductRegisterRequest request(String name, String description, String price) {
+        return new ProductRegisterRequest(name, description, new BigDecimal(price));
+    }
+
     @Nested
     @DisplayName("findById")
     class FindById {
@@ -66,13 +73,15 @@ class ProductServiceTest {
         }
 
         @Test
-        @DisplayName("상품이 없으면 예외를 던진다")
+        @DisplayName("상품이 없으면 PRODUCT_NOT_FOUND로 실패한다")
         void 조회_실패() {
             given(productRepository.findById(99L)).willReturn(Optional.empty());
 
             assertThatThrownBy(() -> productService.findById(99L))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("제품을 찾을 수 없습니다.");
+                .isInstanceOf(BusinessException.class)
+                .hasMessage(ProductErrorCode.PRODUCT_NOT_FOUND.getMessage())
+                .extracting("errorCode")
+                .isEqualTo(ProductErrorCode.PRODUCT_NOT_FOUND);
         }
     }
 
@@ -83,39 +92,28 @@ class ProductServiceTest {
         @Test
         @DisplayName("같은 이름의 상품이 없으면 저장한다")
         void 등록_성공() {
-            ProductInfo request = new ProductInfo(null, "마우스", "무선 경량", new BigDecimal("89000.00"));
             given(productRepository.existsByName("마우스")).willReturn(false);
 
-            productService.register(request);
+            productService.register(request("마우스", "무선 경량", "89000.00"));
 
             verify(productRepository).save(productCaptor.capture());
             Product saved = productCaptor.getValue();
+            assertThat(saved.getId()).isNull();
             assertThat(saved.getName()).isEqualTo("마우스");
             assertThat(saved.getDescription()).isEqualTo("무선 경량");
             assertThat(saved.getPrice()).isEqualByComparingTo("89000.00");
         }
 
         @Test
-        @DisplayName("요청에 id가 들어와도 무시하고 새 상품으로 저장한다")
-        void 등록_요청의_id는_무시된다() {
-            ProductInfo request = new ProductInfo(77L, "모니터", "4K 27인치", new BigDecimal("650000.00"));
-            given(productRepository.existsByName("모니터")).willReturn(false);
-
-            productService.register(request);
-
-            verify(productRepository).save(productCaptor.capture());
-            assertThat(productCaptor.getValue().getId()).isNull();
-        }
-
-        @Test
-        @DisplayName("같은 이름의 상품이 이미 있으면 저장하지 않고 예외를 던진다")
+        @DisplayName("같은 이름의 상품이 이미 있으면 저장하지 않고 PRODUCT_ALREADY_EXIST로 실패한다")
         void 등록_중복() {
-            ProductInfo request = new ProductInfo(null, "마우스", "무선 경량", new BigDecimal("89000.00"));
             given(productRepository.existsByName("마우스")).willReturn(true);
 
-            assertThatThrownBy(() -> productService.register(request))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessage("이미 등록된 상품입니다.");
+            assertThatThrownBy(() -> productService.register(request("마우스", "무선 경량", "89000.00")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage(ProductErrorCode.PRODUCT_ALREADY_EXIST.getMessage())
+                .extracting("errorCode")
+                .isEqualTo(ProductErrorCode.PRODUCT_ALREADY_EXIST);
 
             verify(productRepository, never()).save(any());
         }
@@ -131,7 +129,7 @@ class ProductServiceTest {
             Product existing = product(1L, "이전 이름", "이전 설명", "1000.00");
             given(productRepository.findById(1L)).willReturn(Optional.of(existing));
 
-            productService.update(1L, new ProductInfo(null, "새 이름", "새 설명", new BigDecimal("2000.00")));
+            productService.update(1L, request("새 이름", "새 설명", "2000.00"));
 
             assertThat(existing.getName()).isEqualTo("새 이름");
             assertThat(existing.getDescription()).isEqualTo("새 설명");
@@ -140,14 +138,15 @@ class ProductServiceTest {
         }
 
         @Test
-        @DisplayName("상품이 없으면 예외를 던진다")
+        @DisplayName("상품이 없으면 PRODUCT_NOT_FOUND로 실패한다")
         void 수정_실패() {
             given(productRepository.findById(99L)).willReturn(Optional.empty());
 
-            assertThatThrownBy(() ->
-                productService.update(99L, new ProductInfo(null, "새 이름", "새 설명", BigDecimal.ONE)))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessage("상품 정보를 찾을 수 없습니다.");
+            assertThatThrownBy(() -> productService.update(99L, request("새 이름", "새 설명", "1")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage(ProductErrorCode.PRODUCT_NOT_FOUND.getMessage())
+                .extracting("errorCode")
+                .isEqualTo(ProductErrorCode.PRODUCT_NOT_FOUND);
         }
     }
 
@@ -166,13 +165,15 @@ class ProductServiceTest {
         }
 
         @Test
-        @DisplayName("상품이 없으면 삭제하지 않고 예외를 던진다")
+        @DisplayName("상품이 없으면 삭제하지 않고 PRODUCT_NOT_FOUND로 실패한다")
         void 삭제_실패() {
             given(productRepository.existsById(99L)).willReturn(false);
 
             assertThatThrownBy(() -> productService.delete(99L))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessage("상품 정보를 찾을 수 없습니다.");
+                .isInstanceOf(BusinessException.class)
+                .hasMessage(ProductErrorCode.PRODUCT_NOT_FOUND.getMessage())
+                .extracting("errorCode")
+                .isEqualTo(ProductErrorCode.PRODUCT_NOT_FOUND);
 
             verify(productRepository, never()).deleteById(anyLong());
         }
