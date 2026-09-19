@@ -33,9 +33,7 @@ public class ProductService {
     }
 
     private void checkDuplicate(ProductInfo productInfo) {
-        int count = productRepository.checkDuplicateProduct(productInfo);
-
-        if(count > 0) {
+        if(productRepository.existsByName(productInfo.name())) {
             throw new RuntimeException("이미 등록된 상품입니다.");
         }
     }
