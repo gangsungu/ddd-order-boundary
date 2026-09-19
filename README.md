@@ -16,7 +16,7 @@
 | 3 | 분산 시스템 설계 (CQRS, Event-Driven, ACL, Saga) | |
 | 4 | Kafka & gRPC 실습 | |
 
-현재 진행 상황: **섹션 1 — 설계 문서 작성 + 모놀리식 CRUD 뼈대 구현**
+현재 진행 상황: **섹션 1 완료** — 설계 문서 + 상품 도메인 CRUD + 공통 예외 처리. 섹션 2(헥사고날 전환) 준비 중
 
 ---
 
@@ -61,22 +61,110 @@ H2 는 `MODE=PostgreSQL` 호환 모드로 동작합니다. 3주차 분산 시스
 ```
 src/main/java/com/roykhan/dddorderboundary
 ├── DddOrderBoundaryApplication.java
+├── common
+│   ├── config
+│   │   ├── JacksonConfig.java           # ApiResponse 전용 직렬화 모듈 등록
+│   │   └── JpaAuditingConfig.java
+│   ├── controller
+│   │   └── HealthController.java
+│   ├── exception
+│   │   ├── BaseErrorCode.java           # 에러 코드 계약 (상태/메시지/예외 생성)
+│   │   ├── BusinessException.java       # 에러 코드를 실어 나르는 도메인 예외
+│   │   ├── CommonErrorCode.java         # 공통 4xx/5xx 코드
+│   │   ├── ProductErrorCode.java        # 상품 도메인 코드
+│   │   └── GlobalExceptionHandler.java  # 예외 → ApiResponse 변환
+│   └── response
+│       ├── ApiResponse.java             # 모든 응답의 공통 규격
+│       └── ApiResponseSerializer.java   # 성공 시 data 생략, 실패 시 유지
 └── domain
     ├── base
-    │   └── BaseEntity.java          # 공통 식별자 + 생성/수정 시각 감사(Auditing)
+    │   └── BaseEntity.java              # 공통 식별자 + 생성/수정 시각 감사(Auditing)
     ├── order
-    │   └── Order.java
+    │   └── Order.java                   # 아직 뼈대만 존재
     └── product
-        ├── Product.java             # 상품명, 설명, 가격, 재고 상태
-        ├── StockStatus.java         # SOLD_OUT / PROCESSING / IN_STOCK
+        ├── Product.java                 # 상품명, 설명, 가격
         ├── controller/ProductController.java
+        ├── dto
+        │   ├── ProductInfo.java         # 응답용
+        │   └── ProductRegisterRequest.java  # 등록/수정 요청용 (검증 제약 포함)
         ├── repository/ProductRepository.java
         └── service/ProductService.java
 
-docs/섹션1                            # 섹션 1 미션 산출물 (설계 문서)
+docs/섹션1                                # 섹션 1 미션 산출물 (설계 문서)
 ```
 
 섹션 2부터는 이 패키지 구조를 헥사고날(`presentation` / `application` / `domain` / `infrastructure`) 구조로 리팩터링할 예정입니다.
+
+---
+
+## 구현 현황
+
+### 상품 API
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| `GET` | `/api/product/{id}` | 상품 단건 조회 |
+| `POST` | `/api/product` | 상품 등록 (이름 중복 불가) |
+| `PUT` | `/api/product/{id}` | 상품 수정 |
+| `DELETE` | `/api/product/{id}` | 상품 삭제 |
+| `GET` | `/api/health` | 헬스 체크 |
+
+### 응답 규격
+
+성공과 실패 모두 `ApiResponse` 한 가지 규격을 따릅니다. 성공 응답은 `data` 가 없으면 키를 생략하고, 실패 응답은 클라이언트가 항상 읽을 수 있도록 `data` 키를 유지합니다.
+
+```json
+// 성공
+{"success": true, "code": "success", "message": "상품을 조회하였습니다.", "data": { ... }}
+
+// 실패
+{"success": false, "code": "PRODUCT_NOT_FOUND", "message": "상품을 찾을 수 없습니다.", "data": null}
+```
+
+### 에러 처리
+
+도메인 예외는 `BusinessException` 에 에러 코드를 실어 던지고, `GlobalExceptionHandler` 가 상태 코드와 응답 본문으로 변환합니다. 스프링이 이미 올바른 상태 코드로 처리하던 예외들은 개별 핸들러로 받아 상태를 보존하며, `Exception` 핸들러는 예상하지 못한 오류 전용 최종 방어선으로 남겨둡니다.
+
+| 상황 | 상태 | 코드 |
+|---|---|---|
+| 없는 상품 조회·수정·삭제 | 404 | `PRODUCT_NOT_FOUND` |
+| 이름이 중복된 상품 등록 | 409 | `PRODUCT_ALREADY_EXIST` |
+| 입력값 검증 실패 | 400 | `VALIDATION_FAILED` *(필드별 오류를 `data` 에 담음)* |
+| 깨진 JSON, 파라미터 타입 불일치 | 400 | `INVALID_REQUEST` |
+| 존재하지 않는 경로 | 404 | `NOT_FOUND` |
+| 지원하지 않는 메서드 | 405 | `METHOD_NOT_ALLOWED` |
+| 지원하지 않는 Content-Type | 415 | `UNSUPPORTED_MEDIA_TYPE` |
+| 그 외 모든 예외 | 500 | `INTERNAL_SERVER_ERROR` |
+
+---
+
+## 다음 작업
+
+### 섹션 2 — 헥사고날 전환
+
+- [ ] **주문 도메인 최소 구현** — `Order` / `OrderItem`, 주문 생성·조회·취소
+      주문 시점의 상품명·단가를 스냅샷으로 복사 (설계 문서의 "시점이 중요한 값은 복사한다" 원칙)
+- [ ] **패키지 구조를 헥사고날로 전환** — Ports & Adapters
+
+> 주문을 먼저 만드는 이유: 주문 생성이 상품 컨텍스트를 조회해야 해서 출력 포트가 자연스럽게 필요해집니다.
+> 상품 하나만으로는 포트가 리포지토리뿐이라 포트/어댑터 분리의 효과가 드러나지 않습니다.
+
+### 전환 전 정리 대상
+
+- [ ] `Product` 엔티티의 클래스 레벨 `@Setter` 제거 — 도메인 모델을 분리할 때 가장 먼저 걸리는 지점
+- [ ] `jakarta.transaction.Transactional` → 스프링의 `@Transactional` (`readOnly` 사용 불가)
+- [ ] `ProductService.findById` 에 읽기 전용 트랜잭션 적용
+- [ ] `ProductErrorCode` 를 상품 도메인 패키지로 이동
+- [ ] `GlobalExceptionHandler` 슬라이스 테스트 추가 (현재 회귀 방지 없음)
+- [ ] 상품 목록 조회 엔드포인트 *(선택 — 주문 구현에는 불필요)*
+
+### 섹션 3 이후
+
+- 결제 · 정산 컨텍스트 — 외부 PG 연동과 배치라 Saga·보상 트랜잭션을 다루는 섹션 3에서 진행
+- CQRS, Event-Driven, ACL / Kafka, gRPC
+
+> 설계 문서의 상품 컨텍스트에는 판매상태·재고·판매자 ID 가 있지만 엔티티에는 반영하지 않았습니다.
+> 모놀리식은 간단히 두고 아키텍처 전환에 집중하는 것이 섹션 2의 목적이라, 의도적으로 맞추지 않았습니다.
 
 ---
 
