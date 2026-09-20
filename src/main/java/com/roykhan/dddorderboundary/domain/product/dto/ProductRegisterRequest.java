@@ -11,5 +11,7 @@ public record ProductRegisterRequest(
     @NotBlank
     String description,
     @NotNull @Min(0)
-    BigDecimal price
+    BigDecimal price,
+    @NotNull @Min(0)
+    int initialQuantity
 ) {}
