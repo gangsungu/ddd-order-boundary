@@ -1,0 +1,183 @@
+### 섹션 2 라이브 데모 시나리오
+### 주문 → 재고 예약 → 목업 결제 → 확정 / 보상(복원)
+### IntelliJ HTTP Client 로 위에서부터 순서대로 실행
+
+@host = http://localhost:8080
+
+###############################################################################
+# 0. 준비 — 상품 등록과 입고
+###############################################################################
+
+### 상품 등록 (초기 재고 10)
+POST {{host}}/api/product
+Content-Type: application/json
+
+{
+  "name": "글렌피딕 12년",
+  "description": "싱글몰트 스카치 위스키 700ml",
+  "price": 89000,
+  "initialQuantity": 10
+}
+
+> {% client.global.set("productId", response.body.data.id); %}
+
+### 재고 조정 (입고) — 가용 10 으로 세팅
+PATCH {{host}}/api/product/{{productId}}/stock
+Content-Type: application/json
+
+{
+  "quantity": 10
+}
+
+### 재고 확인 — 가용 10 / 예약 0
+GET {{host}}/api/product/{{productId}}/stock
+
+###############################################################################
+# 1. 정상 흐름 — 주문 → 결제 성공 → 확정
+###############################################################################
+
+### 주문 생성 — 주문 PENDING, 예약 RESERVED
+POST {{host}}/api/order
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "items": [
+    { "productId": {{productId}}, "quantity": 2 }
+  ]
+}
+
+> {% client.global.set("orderId", response.body.data.id); %}
+
+### 재고 확인 — 가용 8 / 예약 2 (아직 차감 확정 아님)
+GET {{host}}/api/product/{{productId}}/stock
+
+### 주문 조회 — PENDING, 주문 시점 상품명·단가 스냅샷 확인
+GET {{host}}/api/order/{{orderId}}
+
+### 결제 성공 — 예약 확정
+# 브라우저 데모: {{host}}/payment.html?orderId={{orderId}} 에서 [결제 성공]
+POST {{host}}/api/payment/{{orderId}}/result
+Content-Type: application/json
+
+{
+  "result": "SUCCESS"
+}
+
+### 재고 확인 — 가용 8 / 예약 0 (예약이 소멸하며 차감 확정)
+GET {{host}}/api/product/{{productId}}/stock
+
+### 주문 조회 — CONFIRMED
+GET {{host}}/api/order/{{orderId}}
+
+###############################################################################
+# 2. 보상 트랜잭션 — 주문 → 결제 실패 → 재고 복원
+###############################################################################
+
+### 주문 생성 (3개)
+POST {{host}}/api/order
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "items": [
+    { "productId": {{productId}}, "quantity": 3 }
+  ]
+}
+
+> {% client.global.set("failOrderId", response.body.data.id); %}
+
+### 재고 확인 — 가용 5 / 예약 3
+GET {{host}}/api/product/{{productId}}/stock
+
+### 결제 실패 — 예약 해제, 재고 복원
+# 브라우저 데모: {{host}}/payment.html?orderId={{failOrderId}} 에서 [결제 실패]
+POST {{host}}/api/payment/{{failOrderId}}/result
+Content-Type: application/json
+
+{
+  "result": "FAILURE"
+}
+
+### 재고 확인 — 가용 8 / 예약 0 으로 원복
+GET {{host}}/api/product/{{productId}}/stock
+
+### 주문 조회 — PAYMENT_FAILED
+GET {{host}}/api/order/{{failOrderId}}
+
+###############################################################################
+# 3. 주문 취소 — 확정된 주문 되돌리기
+###############################################################################
+
+### 1번에서 확정한 주문 취소
+POST {{host}}/api/order/{{orderId}}/cancel
+
+### 재고 확인 — 가용 10 으로 복원
+GET {{host}}/api/product/{{productId}}/stock
+
+### 같은 주문 다시 취소 — 409 ORDER_ALREADY_CANCELED
+POST {{host}}/api/order/{{orderId}}/cancel
+
+###############################################################################
+# 4. 예약 만료 — 결제하지 않고 방치
+###############################################################################
+
+### 주문 생성 후 결제하지 않음
+POST {{host}}/api/order
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "items": [
+    { "productId": {{productId}}, "quantity": 4 }
+  ]
+}
+
+> {% client.global.set("expireOrderId", response.body.data.id); %}
+
+### 재고 확인 — 가용 6 / 예약 4
+GET {{host}}/api/product/{{productId}}/stock
+
+### (만료 스케줄러가 돌 때까지 대기) 재고 확인 — 가용 10 / 예약 0
+GET {{host}}/api/product/{{productId}}/stock
+
+### 주문 조회 — EXPIRED
+GET {{host}}/api/order/{{expireOrderId}}
+
+###############################################################################
+# 5. 실패 케이스
+###############################################################################
+
+### 재고보다 많은 수량 주문 — 409 OUT_OF_STOCK
+POST {{host}}/api/order
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "items": [
+    { "productId": {{productId}}, "quantity": 999 }
+  ]
+}
+
+### 없는 상품 주문 — 404 PRODUCT_NOT_FOUND
+POST {{host}}/api/order
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "items": [
+    { "productId": 99999, "quantity": 1 }
+  ]
+}
+
+### 없는 주문 조회 — 404 ORDER_NOT_FOUND
+GET {{host}}/api/order/99999
+
+### 주문 항목 없음 — 400 VALIDATION_FAILED
+POST {{host}}/api/order
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "items": []
+}
