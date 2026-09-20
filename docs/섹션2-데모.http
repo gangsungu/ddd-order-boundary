@@ -111,13 +111,13 @@ GET {{host}}/api/order/{{failOrderId}}
 ###############################################################################
 
 ### 1번에서 확정한 주문 취소
-POST {{host}}/api/order/{{orderId}}/cancel
+PATCH {{host}}/api/order/{{orderId}}/cancel
 
 ### 재고 확인 — 가용 10 으로 복원
 GET {{host}}/api/product/{{productId}}/stock
 
 ### 같은 주문 다시 취소 — 409 ORDER_ALREADY_CANCELED
-POST {{host}}/api/order/{{orderId}}/cancel
+PATCH {{host}}/api/order/{{orderId}}/cancel
 
 ###############################################################################
 # 4. 예약 만료 — 결제하지 않고 방치

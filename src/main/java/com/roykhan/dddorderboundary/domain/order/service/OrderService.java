@@ -3,6 +3,7 @@ package com.roykhan.dddorderboundary.domain.order.service;
 import com.roykhan.dddorderboundary.common.exception.OrderErrorCode;
 import com.roykhan.dddorderboundary.domain.order.Order;
 import com.roykhan.dddorderboundary.domain.order.dto.CreateOrderRequest;
+import com.roykhan.dddorderboundary.domain.order.dto.OrderInfo;
 import com.roykhan.dddorderboundary.domain.order.repository.OrderRepository;
 import com.roykhan.dddorderboundary.domain.product.Product;
 import com.roykhan.dddorderboundary.domain.product.repository.ProductRepository;
@@ -67,5 +68,27 @@ public class OrderService {
         }
 
         return order.getId();
+    }
+
+    // 항목까지 트랜잭션 안에서 DTO 로 옮긴다 (open-in-view: false)
+    @Transactional(readOnly = true)
+    public OrderInfo findById(long orderId) {
+        return OrderInfo.from(getOrder(orderId));
+    }
+
+    @Transactional
+    public void cancelOrder(long orderId) {
+        Order order = getOrder(orderId);
+
+        // 취소 가능한 상태인지는 Order 가 판단한다
+        order.cancel();
+
+        // 연관된 PENDING 상태 결제도 취소 처리
+        // 추후 작업 부분
+    }
+
+    private Order getOrder(long orderId) {
+        return orderRepository.findById(orderId)
+            .orElseThrow(OrderErrorCode.ORDER_NOT_FOUND::exception);
     }
 }

@@ -7,6 +7,8 @@ import org.springframework.http.HttpStatus;
 public enum OrderErrorCode implements BaseErrorCode {
     ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "주문을 찾을 수 없습니다."),
     ORDER_ALREADY_CANCELLED(HttpStatus.CONFLICT, "이미 취소된 주문입니다."),
+    ORDER_ALREADY_EXPIRED(HttpStatus.CONFLICT, "이미 만료된 주문입니다."),
+    ORDER_ALREADY_CONFIRMED(HttpStatus.CONFLICT, "확정된 주문은 취소할 수 없습니다."),
     INVALID_ORDER_ITEM(HttpStatus.BAD_REQUEST, "존재하지 않는 상품이 포함되어 있습니다.");
 
     private final HttpStatus httpStatus;
