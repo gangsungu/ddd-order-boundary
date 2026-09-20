@@ -21,11 +21,14 @@ import com.roykhan.dddorderboundary.domain.order.repository.OrderRepository;
 import com.roykhan.dddorderboundary.domain.product.Product;
 import com.roykhan.dddorderboundary.domain.product.repository.ProductRepository;
 import com.roykhan.dddorderboundary.domain.stock.Stock;
+import com.roykhan.dddorderboundary.domain.stock.StockReservation;
+import com.roykhan.dddorderboundary.domain.stock.enums.ReservationStatus;
 import com.roykhan.dddorderboundary.domain.stock.repository.StockRepository;
 import com.roykhan.dddorderboundary.domain.stock.service.StockReservationService;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -299,6 +302,100 @@ class OrderServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(StockErrorCode.OUT_OF_STOCK);
+        }
+    }
+
+    @Nested
+    @DisplayName("cancelOrder")
+    class CancelOrder {
+
+        // 예약까지 걸린 PENDING 주문. 실제 도메인 객체를 써서 재고 복원까지 함께 확인한다
+        private Order pendingOrder(long orderId, Stock stock, int quantity) {
+            Order order = Order.create(1L, LocalDateTime.now().plusMinutes(EXPIRE_MINUTES));
+            order.addItem(stock.getProductId(), "상품", new BigDecimal("1000"), quantity);
+            StockReservation.create(stock, order, quantity, order.getExpireAt());
+            ReflectionTestUtils.setField(order, "id", orderId);
+            return order;
+        }
+
+        @Test
+        @DisplayName("PENDING 주문을 취소하면 CANCELLED 로 바꾸고 잡아둔 재고를 돌려준다")
+        void 취소_성공() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3);
+            assertThat(stock.getAvailableQuantity()).isEqualTo(7);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            orderService.cancelOrder(1L);
+
+            assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.CANCELLED);
+            assertThat(order.getCancelledAt()).isNotNull();
+            assertThat(stock.getAvailableQuantity()).isEqualTo(10);
+            assertThat(order.getReservations())
+                .allMatch(reservation -> reservation.getReservationStatus() == ReservationStatus.CANCELLED);
+        }
+
+        @Test
+        @DisplayName("주문이 없으면 ORDER_NOT_FOUND 로 실패한다")
+        void 주문_없음() {
+            given(orderRepository.findById(99L)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> orderService.cancelOrder(99L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage(OrderErrorCode.ORDER_NOT_FOUND.getMessage())
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
+        }
+
+        @Test
+        @DisplayName("이미 취소된 주문은 ORDER_ALREADY_CANCELLED 로 실패하고 재고를 다시 돌려주지 않는다")
+        void 이미_취소됨() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3);
+            ReflectionTestUtils.setField(order, "orderStatus", OrderStatus.CANCELLED);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            assertThatThrownBy(() -> orderService.cancelOrder(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage(OrderErrorCode.ORDER_ALREADY_CANCELLED.getMessage())
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_ALREADY_CANCELLED);
+
+            assertThat(stock.getAvailableQuantity()).isEqualTo(7);
+        }
+
+        @Test
+        @DisplayName("만료된 주문은 ORDER_ALREADY_EXPIRED 로 실패한다")
+        void 이미_만료됨() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3);
+            ReflectionTestUtils.setField(order, "orderStatus", OrderStatus.EXPIRED);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            assertThatThrownBy(() -> orderService.cancelOrder(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage(OrderErrorCode.ORDER_ALREADY_EXPIRED.getMessage())
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_ALREADY_EXPIRED);
+
+            assertThat(stock.getAvailableQuantity()).isEqualTo(7);
+        }
+
+        @Test
+        @DisplayName("확정된 주문은 ORDER_ALREADY_CONFIRMED 로 실패한다 - 환불은 결제 취소가 선행되어야 한다")
+        void 이미_확정됨() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3);
+            ReflectionTestUtils.setField(order, "orderStatus", OrderStatus.CONFIRMED);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            assertThatThrownBy(() -> orderService.cancelOrder(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage(OrderErrorCode.ORDER_ALREADY_CONFIRMED.getMessage())
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
+
+            assertThat(stock.getAvailableQuantity()).isEqualTo(7);
         }
     }
 }

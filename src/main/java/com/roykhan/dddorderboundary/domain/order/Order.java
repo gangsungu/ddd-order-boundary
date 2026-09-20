@@ -1,5 +1,6 @@
 package com.roykhan.dddorderboundary.domain.order;
 
+import com.roykhan.dddorderboundary.common.exception.OrderErrorCode;
 import com.roykhan.dddorderboundary.domain.base.BaseEntity;
 import com.roykhan.dddorderboundary.domain.order.enums.OrderStatus;
 import com.roykhan.dddorderboundary.domain.stock.StockReservation;
@@ -74,5 +75,41 @@ public class Order extends BaseEntity {
     // 밖에서 항목을 넣으면 총액과 어긋나므로 읽기 전용으로 내보낸다
     public List<OrderItem> getItems() {
         return Collections.unmodifiableList(this.items);
+    }
+
+    // 주문 취소
+    // 점유한 재고 반환
+    public void cancel() {
+        checkCancel();
+        this.orderStatus = OrderStatus.CANCELLED;
+        this.cancelledAt = LocalDateTime.now();
+
+        reservations.forEach(StockReservation::cancelByUser);
+    }
+
+    // 주문 만료
+    // 점유한 재고 반환
+    public void expire() {
+        this.orderStatus = OrderStatus.EXPIRED;
+        this.expireAt = LocalDateTime.now();
+        this.cancelledAt = LocalDateTime.now();
+
+        reservations.forEach(StockReservation::cancelByExpiration);
+    }
+
+    // 취소는 결제 전 주문에서만 가능하다.
+    // 확정된 주문의 취소는 환불이라 결제 취소가 선행되어야 하고, 이는 섹션 3 범위다.
+    private void checkCancel() {
+        if(this.orderStatus == OrderStatus.CANCELLED) {
+            throw OrderErrorCode.ORDER_ALREADY_CANCELLED.exception();
+        }
+
+        if(this.orderStatus == OrderStatus.EXPIRED) {
+            throw OrderErrorCode.ORDER_ALREADY_EXPIRED.exception();
+        }
+
+        if(this.orderStatus == OrderStatus.CONFIRMED) {
+            throw OrderErrorCode.ORDER_ALREADY_CONFIRMED.exception();
+        }
     }
 }

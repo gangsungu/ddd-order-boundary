@@ -68,4 +68,20 @@ public class OrderService {
 
         return order.getId();
     }
+
+    @Transactional
+    public void cancelOrder(long orderId) {
+        Order order = getOrder(orderId);
+
+        // 취소 가능한 상태인지는 Order 가 판단한다
+        order.cancel();
+
+        // 연관된 PENDING 상태 결제도 취소 처리
+        // 추후 작업 부분
+    }
+
+    private Order getOrder(long orderId) {
+        return orderRepository.findById(orderId)
+            .orElseThrow(OrderErrorCode.ORDER_NOT_FOUND::exception);
+    }
 }
