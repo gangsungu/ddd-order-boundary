@@ -14,6 +14,8 @@ import com.roykhan.dddorderboundary.domain.product.Product;
 import com.roykhan.dddorderboundary.domain.product.dto.ProductInfo;
 import com.roykhan.dddorderboundary.domain.product.dto.ProductRegisterRequest;
 import com.roykhan.dddorderboundary.domain.product.repository.ProductRepository;
+import com.roykhan.dddorderboundary.domain.stock.Stock;
+import com.roykhan.dddorderboundary.domain.stock.repository.StockRepository;
 import java.math.BigDecimal;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
@@ -34,11 +36,17 @@ class ProductServiceTest {
     @Mock
     private ProductRepository productRepository;
 
+    @Mock
+    private StockRepository stockRepository;
+
     @InjectMocks
     private ProductService productService;
 
     @Captor
     private ArgumentCaptor<Product> productCaptor;
+
+    @Captor
+    private ArgumentCaptor<Stock> stockCaptor;
 
     private static Product product(Long id, String name, String description, String price) {
         Product product = Product.builder()
@@ -51,7 +59,11 @@ class ProductServiceTest {
     }
 
     private static ProductRegisterRequest request(String name, String description, String price) {
-        return new ProductRegisterRequest(name, description, new BigDecimal(price));
+        return request(name, description, price, 10);
+    }
+
+    private static ProductRegisterRequest request(String name, String description, String price, int initialQuantity) {
+        return new ProductRegisterRequest(name, description, new BigDecimal(price), initialQuantity);
     }
 
     @Nested
@@ -98,10 +110,28 @@ class ProductServiceTest {
 
             verify(productRepository).save(productCaptor.capture());
             Product saved = productCaptor.getValue();
-            assertThat(saved.getId()).isNull();
             assertThat(saved.getName()).isEqualTo("마우스");
             assertThat(saved.getDescription()).isEqualTo("무선 경량");
             assertThat(saved.getPrice()).isEqualByComparingTo("89000.00");
+        }
+
+        @Test
+        @DisplayName("상품을 저장하면 요청한 초기 수량으로 재고도 함께 만든다")
+        void 등록_재고_생성() {
+            given(productRepository.existsByName("마우스")).willReturn(false);
+            given(productRepository.save(any(Product.class))).willAnswer(invocation -> {
+                Product product = invocation.getArgument(0);
+                ReflectionTestUtils.setField(product, "id", 7L);
+                return product;
+            });
+
+            productService.register(request("마우스", "무선 경량", "89000.00", 25));
+
+            verify(stockRepository).save(stockCaptor.capture());
+            Stock stock = stockCaptor.getValue();
+            assertThat(stock.getProductId()).isEqualTo(7L);
+            assertThat(stock.getQuantity()).isEqualTo(25);
+            assertThat(stock.getAvailableQuantity()).isEqualTo(25);
         }
 
         @Test
@@ -116,6 +146,7 @@ class ProductServiceTest {
                 .isEqualTo(ProductErrorCode.PRODUCT_ALREADY_EXIST);
 
             verify(productRepository, never()).save(any());
+            verify(stockRepository, never()).save(any());
         }
     }
 

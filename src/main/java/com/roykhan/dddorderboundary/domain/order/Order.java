@@ -1,18 +1,78 @@
 package com.roykhan.dddorderboundary.domain.order;
 
 import com.roykhan.dddorderboundary.domain.base.BaseEntity;
+import com.roykhan.dddorderboundary.domain.order.enums.OrderStatus;
+import com.roykhan.dddorderboundary.domain.stock.StockReservation;
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
-import lombok.AllArgsConstructor;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import lombok.AccessLevel;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Entity
+@Getter
 @Table(name = "orders")
-@NoArgsConstructor
-@AllArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Order extends BaseEntity {
 
     @Column(nullable = false)
     private Long memberId;
+
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<OrderItem> items = new ArrayList<>();
+
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL)
+    private List<StockReservation> reservations = new ArrayList<>();
+
+    @Column(nullable = false)
+    private BigDecimal totalPrice;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private OrderStatus orderStatus;
+
+    @Column(nullable = false)
+    private LocalDateTime expireAt;
+
+    @Column
+    private LocalDateTime confirmedAt;
+
+    @Column
+    private LocalDateTime cancelledAt;
+
+    public static Order create(Long memberId, LocalDateTime expireAt) {
+        Order order = new Order();
+        order.memberId = memberId;
+        order.orderStatus = OrderStatus.PENDING;
+        order.expireAt = expireAt;
+        order.totalPrice = BigDecimal.ZERO;
+        return order;
+    }
+
+    // 주문 시점의 상품명·단가를 복사해 항목으로 담는다.
+    // 총액이 항목 합과 어긋날 수 없도록 갱신은 이 메서드에서만 한다.
+    public void addItem(Long productId, String productName, BigDecimal unitPrice, int quantity) {
+        OrderItem orderItem = OrderItem.create(this, productId, productName, unitPrice, quantity);
+        this.items.add(orderItem);
+        this.totalPrice = this.totalPrice.add(orderItem.amount());
+    }
+
+    public void addReservation(StockReservation reservation) {
+        this.reservations.add(reservation);
+    }
+
+    // 밖에서 항목을 넣으면 총액과 어긋나므로 읽기 전용으로 내보낸다
+    public List<OrderItem> getItems() {
+        return Collections.unmodifiableList(this.items);
+    }
 }

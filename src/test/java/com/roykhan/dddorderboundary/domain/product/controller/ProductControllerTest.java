@@ -1,7 +1,9 @@
 package com.roykhan.dddorderboundary.domain.product.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -62,7 +64,8 @@ class ProductControllerTest {
                     {
                       "name": "마우스",
                       "description": "무선 경량",
-                      "price": 89000.00
+                      "price": 89000.00,
+                      "initialQuantity": 10
                     }
                     """))
             .andExpect(status().isOk())
@@ -76,7 +79,29 @@ class ProductControllerTest {
         assertThat(passed.name()).isEqualTo("마우스");
         assertThat(passed.description()).isEqualTo("무선 경량");
         assertThat(passed.price()).isEqualByComparingTo("89000.00");
+        assertThat(passed.initialQuantity()).isEqualTo(10);
     }
+
+    // 원시 타입 필드가 빠지면 검증 이전에 역직렬화에서 걸려 VALIDATION_FAILED 가 아닌 INVALID_REQUEST 가 된다
+    @Test
+    @DisplayName("POST /api/product - initialQuantity 가 빠지면 INVALID_REQUEST 로 실패한다")
+    void 상품_등록_초기수량_누락() throws Exception {
+        mockMvc.perform(post("/api/product")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "name": "마우스",
+                      "description": "무선 경량",
+                      "price": 89000.00
+                    }
+                    """))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.success").value(false))
+            .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+
+        verify(productService, never()).register(any());
+    }
+
 
     @Test
     @DisplayName("PUT /api/product/{id} - 경로의 id와 본문을 서비스에 넘긴다")
@@ -87,7 +112,8 @@ class ProductControllerTest {
                     {
                       "name": "새 이름",
                       "description": "새 설명",
-                      "price": 12345.00
+                      "price": 12345.00,
+                      "initialQuantity": 5
                     }
                     """))
             .andExpect(status().isOk())

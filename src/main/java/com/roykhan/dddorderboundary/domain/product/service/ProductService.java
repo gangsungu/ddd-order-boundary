@@ -5,6 +5,8 @@ import com.roykhan.dddorderboundary.domain.product.Product;
 import com.roykhan.dddorderboundary.domain.product.dto.ProductInfo;
 import com.roykhan.dddorderboundary.domain.product.dto.ProductRegisterRequest;
 import com.roykhan.dddorderboundary.domain.product.repository.ProductRepository;
+import com.roykhan.dddorderboundary.domain.stock.Stock;
+import com.roykhan.dddorderboundary.domain.stock.repository.StockRepository;
 import jakarta.transaction.Transactional;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
@@ -15,6 +17,7 @@ import org.springframework.stereotype.Service;
 public class ProductService {
 
     private final ProductRepository productRepository;
+    private final StockRepository stockRepository;
 
     public ProductInfo findById(Long id) {
         Product product = productRepository.findById(id).orElseThrow(
@@ -33,6 +36,9 @@ public class ProductService {
             .build();
 
         productRepository.save(product);
+
+        // 재고는 상품과 같은 컨텍스트라 등록 시점에 함께 만든다
+        stockRepository.save(Stock.create(product.getId(), req.initialQuantity()));
     }
 
     private void checkDuplicate(ProductRegisterRequest req) {

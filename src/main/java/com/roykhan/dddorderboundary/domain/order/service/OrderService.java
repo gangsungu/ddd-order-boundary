@@ -1,0 +1,71 @@
+package com.roykhan.dddorderboundary.domain.order.service;
+
+import com.roykhan.dddorderboundary.common.exception.OrderErrorCode;
+import com.roykhan.dddorderboundary.domain.order.Order;
+import com.roykhan.dddorderboundary.domain.order.dto.CreateOrderRequest;
+import com.roykhan.dddorderboundary.domain.order.repository.OrderRepository;
+import com.roykhan.dddorderboundary.domain.product.Product;
+import com.roykhan.dddorderboundary.domain.product.repository.ProductRepository;
+import com.roykhan.dddorderboundary.domain.stock.Stock;
+import com.roykhan.dddorderboundary.domain.stock.repository.StockRepository;
+import com.roykhan.dddorderboundary.domain.stock.service.StockReservationService;
+import jakarta.validation.Valid;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+@RequiredArgsConstructor
+public class OrderService {
+
+    private final ProductRepository productRepository;
+    private final StockRepository stockRepository;
+    private final OrderRepository orderRepository;
+
+    private final StockReservationService stockReservationService;
+
+    @Value("${order.reservation.expire-time:10}")
+    private int expireTime;
+
+    @Transactional
+    public long createOrder(@Valid CreateOrderRequest request) {
+        List<Long> productIds = request.items().stream()
+            .map(CreateOrderRequest.OrderLine::productId)
+            .distinct()
+            .toList();
+
+        Map<Long, Product> products = productRepository.findAllById(productIds).stream()
+            .collect(Collectors.toMap(Product::getId, Function.identity()));
+
+        Map<Long, Stock> stocks = stockRepository.findAllByProductIdIn(productIds).stream()
+            .collect(Collectors.toMap(Stock::getProductId, Function.identity()));
+
+        if(products.size() != productIds.size() || stocks.size() != productIds.size()) {
+            throw OrderErrorCode.INVALID_ORDER_ITEM.exception();
+        }
+
+        // 주문 생성 - 항목마다 주문 시점의 상품명·단가를 복사해 담고 총액은 주문이 계산한다
+        LocalDateTime expireAt = LocalDateTime.now().plusMinutes(expireTime);
+        Order order = Order.create(request.memberId(), expireAt);
+
+        for(CreateOrderRequest.OrderLine line : request.items()) {
+            Product product = products.get(line.productId());
+            order.addItem(product.getId(), product.getName(), product.getPrice(), line.quantity());
+        }
+
+        orderRepository.save(order);
+
+        // 재고 예약
+        for(CreateOrderRequest.OrderLine line : request.items()) {
+            stockReservationService.reserveStock(order, stocks.get(line.productId()), line.quantity(), expireAt);
+        }
+
+        return order.getId();
+    }
+}
