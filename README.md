@@ -16,7 +16,7 @@
 | 3 | 분산 시스템 설계 (CQRS, Event-Driven, ACL, Saga) | |
 | 4 | Kafka & gRPC 실습 | |
 
-현재 진행 상황: **섹션 1 완료** — 설계 문서 + 상품 도메인 CRUD + 공통 예외 처리. 섹션 2(헥사고날 전환) 준비 중
+현재 진행 상황: **섹션 2 진행 중** — 주문 생성·조회·취소와 재고 예약까지 구현했습니다. 목업 결제와 헥사고날 전환이 남았습니다
 
 ---
 
@@ -54,6 +54,8 @@ PostgreSQL 로 띄우려면 프로필을 전환합니다. 접속 정보는 `.env
 
 H2 는 `MODE=PostgreSQL` 호환 모드로 동작합니다. 3주차 분산 시스템 단계에서 실제 PostgreSQL 이 필요해지면 프로필만 바꾸면 됩니다.
 
+API 를 순서대로 찔러볼 수 있는 시나리오는 [`docs/섹션2-데모.http`](docs/섹션2-데모.http) 에 있습니다. IntelliJ HTTP Client 로 위에서부터 실행하면 상품 등록 → 주문 → 재고 예약 → 취소·복원 흐름을 그대로 따라갈 수 있습니다. 결제와 재고 조회 구간은 아직 구현 전이라 동작하지 않습니다.
+
 ---
 
 ## 프로젝트 구조
@@ -80,34 +82,77 @@ src/main/java/com/roykhan/dddorderboundary
     ├── base
     │   └── BaseEntity.java              # 공통 식별자 + 생성/수정 시각 감사(Auditing)
     ├── order
-    │   └── Order.java                   # 아직 뼈대만 존재
+    │   ├── Order.java                   # 주문 애그리거트 루트 — 상태 전이와 총액 계산
+    │   ├── OrderItem.java               # 주문 시점 상품명·단가 스냅샷
+    │   ├── enums/OrderStatus.java
+    │   ├── controller/OrderController.java
+    │   ├── dto
+    │   │   ├── CreateOrderRequest.java  # 생성 요청 (중첩 OrderLine)
+    │   │   ├── OrderCreateInfo.java     # 생성 응답 (주문 ID)
+    │   │   └── OrderInfo.java           # 조회 응답 (항목 내역 포함)
+    │   ├── repository/OrderRepository.java
+    │   └── service/OrderService.java
+    ├── stock
+    │   ├── Stock.java                   # 총 재고와 가용 수량, 낙관적 락
+    │   ├── StockReservation.java        # 예약 주체·수량·만료 시각
+    │   ├── enums
+    │   │   ├── StockStatus.java
+    │   │   └── ReservationStatus.java
+    │   ├── repository/StockRepository.java
+    │   └── service/StockReservationService.java
     └── product
         ├── Product.java                 # 상품명, 설명, 가격
         ├── controller/ProductController.java
         ├── dto
         │   ├── ProductInfo.java         # 응답용
-        │   └── ProductRegisterRequest.java  # 등록/수정 요청용 (검증 제약 포함)
+        │   └── ProductRegisterRequest.java  # 등록/수정 요청용 (초기 재고 수량 포함)
         ├── repository/ProductRepository.java
         └── service/ProductService.java
 
 docs/섹션1                                # 섹션 1 미션 산출물 (설계 문서)
+docs/섹션2-데모.http                       # 라이브 데모 시나리오
 ```
 
-섹션 2부터는 이 패키지 구조를 헥사고날(`presentation` / `application` / `domain` / `infrastructure`) 구조로 리팩터링할 예정입니다.
+아직 계층형 구조입니다. 섹션 2 안에서 헥사고날(Ports & Adapters)로 재배치할 예정이고, 주문이 상품·재고를 호출하는 지점이 출력 포트가 됩니다.
+
+재고를 `Product` 가 아닌 별도 엔티티로 둔 것은 컨텍스트를 나눈 것이 아닙니다. 재고는 상품 컨텍스트가 소유하되, 쓰기 경합과 변경 주체가 달라 애그리거트만 분리했습니다.
 
 ---
 
 ## 구현 현황
+
+### 주문 API
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| `POST` | `/api/order` | 주문 생성 — 상품·재고를 확인하고 재고를 예약 |
+| `GET` | `/api/order/{orderId}` | 주문 조회 — 상태와 주문 시점 항목 내역 |
+| `PATCH` | `/api/order/{orderId}/cancel` | 주문 취소 — 예약한 재고를 반환 |
 
 ### 상품 API
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
 | `GET` | `/api/product/{id}` | 상품 단건 조회 |
-| `POST` | `/api/product` | 상품 등록 (이름 중복 불가) |
+| `POST` | `/api/product` | 상품 등록 (이름 중복 불가, 초기 재고를 함께 생성) |
 | `PUT` | `/api/product/{id}` | 상품 수정 |
 | `DELETE` | `/api/product/{id}` | 상품 삭제 |
 | `GET` | `/api/health` | 헬스 체크 |
+
+### 주문과 재고 예약
+
+주문을 만들면 재고의 **가용 수량이 예약으로 넘어가고**, 결제 결과가 그 예약을 확정하거나 해제합니다. 총 재고가 실제로 줄어드는 시점은 결제가 성공해 예약이 확정될 때입니다.
+
+| 주문 상태 | 언제 | 재고 | 예약 |
+|---|---|---|---|
+| `PENDING` | 주문 생성 직후 (결제 대기) | 가용 수량 차감 | `RESERVED` |
+| `CONFIRMED` | 결제 성공 *(미구현)* | 총 재고 차감 | `CONFIRMED` |
+| `CANCELLED` | 사용자 취소 | 가용 수량 복원 | `CANCELLED` |
+| `EXPIRED` | 예약 만료 *(배치 미구현)* | 가용 수량 복원 | `EXPIRED` |
+
+취소는 `PENDING` 에서만 가능합니다. 확정된 주문의 취소는 환불이라 결제 취소가 선행되어야 하므로 섹션 3 범위입니다. 사용자 취소와 시간 만료를 상태로 구분해 남기고, 예약 해제는 `RESERVED` 상태에서만 허용해 재고가 중복 복원되지 않게 합니다.
+
+주문 항목(`OrderItem`)은 주문 시점의 상품명과 단가를 복사해 둡니다. 이후 상품 가격이 바뀌어도 이미 끝난 주문의 금액은 달라지지 않고, 조회할 때 상품을 다시 읽지 않습니다. 설계 문서의 **"시점이 중요한 값은 복사한다"** 원칙을 구현한 부분입니다.
 
 ### 응답 규격
 
@@ -125,10 +170,28 @@ docs/섹션1                                # 섹션 1 미션 산출물 (설계 
 
 도메인 예외는 `BusinessException` 에 에러 코드를 실어 던지고, `GlobalExceptionHandler` 가 상태 코드와 응답 본문으로 변환합니다. 스프링이 이미 올바른 상태 코드로 처리하던 예외들은 개별 핸들러로 받아 상태를 보존하며, `Exception` 핸들러는 예상하지 못한 오류 전용 최종 방어선으로 남겨둡니다.
 
+도메인 코드
+
 | 상황 | 상태 | 코드 |
 |---|---|---|
 | 없는 상품 조회·수정·삭제 | 404 | `PRODUCT_NOT_FOUND` |
 | 이름이 중복된 상품 등록 | 409 | `PRODUCT_ALREADY_EXIST` |
+| 없는 주문 조회·취소 | 404 | `ORDER_NOT_FOUND` |
+| 없는 상품이 포함된 주문 | 400 | `INVALID_ORDER_ITEM` |
+| 이미 취소된 주문을 취소 | 409 | `ORDER_ALREADY_CANCELLED` |
+| 만료된 주문을 취소 | 409 | `ORDER_ALREADY_EXPIRED` |
+| 확정된 주문을 취소 | 409 | `ORDER_ALREADY_CONFIRMED` |
+| 재고 부족 | 409 | `OUT_OF_STOCK` |
+| 수량이 1 미만 | 400 | `INVALID_QUANTITY` |
+| 재고를 찾을 수 없음 | 404 | `STOCK_NOT_FOUND` |
+| 확정할 수 없는 상태의 예약 | 409 | `RESERVATION_NOT_CONFIRMABLE` |
+| 해제할 수 없는 상태의 예약 | 409 | `RESERVATION_NOT_CANCELLABLE` |
+| 만료된 예약을 확정 | 409 | `RESERVATION_EXPIRED` |
+
+공통 코드
+
+| 상황 | 상태 | 코드 |
+|---|---|---|
 | 입력값 검증 실패 | 400 | `VALIDATION_FAILED` *(필드별 오류를 `data` 에 담음)* |
 | 깨진 JSON, 파라미터 타입 불일치 | 400 | `INVALID_REQUEST` |
 | 존재하지 않는 경로 | 404 | `NOT_FOUND` |
@@ -136,18 +199,24 @@ docs/섹션1                                # 섹션 1 미션 산출물 (설계 
 | 지원하지 않는 Content-Type | 415 | `UNSUPPORTED_MEDIA_TYPE` |
 | 그 외 모든 예외 | 500 | `INTERNAL_SERVER_ERROR` |
 
+> 원시 타입(`int`) 필드가 요청 본문에서 빠지면 검증 이전 역직렬화 단계에서 걸려 `VALIDATION_FAILED` 가 아닌 `INVALID_REQUEST` 가 나갑니다. 필드별 메시지가 필요하면 래퍼 타입으로 바꿔야 합니다.
+
 ---
 
 ## 다음 작업
 
 ### 섹션 2 — 헥사고날 전환
 
-- [ ] **주문 도메인 최소 구현** — `Order` / `OrderItem` / `OrderStatus`, 주문 생성·조회·취소
+- [x] **주문 도메인** — `Order` / `OrderItem` / `OrderStatus`, 주문 생성·조회·취소
       주문 시점의 상품명·단가를 스냅샷으로 복사 (설계 문서의 "시점이 중요한 값은 복사한다" 원칙)
-- [ ] **재고 예약 연동** — `Stock`(가용·예약 수량) / `StockReservation`
-      주문 생성이 가용수량을 예약으로 옮기고, 미확정 예약은 만료되면 해제
+- [x] **재고 예약 연동** — `Stock`(총 재고·가용 수량) / `StockReservation`
+      주문 생성이 가용 수량을 예약으로 옮기고, 취소하면 되돌린다
 - [ ] **목업 결제** — 성공·실패 두 가지만 던지는 목업 페이지
       성공은 예약 확정, 실패는 재고 복원 (보상 트랜잭션)
+- [ ] **재고 조회 API** — `GET /api/product/{productId}/stock`
+      예약과 복원이 실제로 일어났는지 확인할 수단이 없어 데모에 필요
+- [ ] **예약 만료 스케줄러** — 미확정 예약을 배치로 해제
+      `expireAt` 과 `isExpired()` 는 있고 배치만 없음
 - [ ] **패키지 구조를 헥사고날로 전환** — Ports & Adapters
 
 > 주문을 먼저 만드는 이유: 주문 생성이 상품 컨텍스트를 조회해야 해서 출력 포트가 자연스럽게 필요해집니다.
@@ -156,13 +225,23 @@ docs/섹션1                                # 섹션 1 미션 산출물 (설계 
 > 결제를 목업으로 두는 이유: 예약을 확정하거나 해제할 주체가 필요한데 실제 PG 연동은 섹션 3 범위입니다.
 > 성공·실패만 던지는 목업이면 보상 트랜잭션 흐름은 그대로 성립하고, 나중에 출력 어댑터만 교체하면 됩니다.
 
-### 전환 전 정리 대상
+### 정리 대상
 
+경계와 관련된 것
+
+- [ ] `Order` ↔ `StockReservation` 양방향 JPA 연관을 `orderId` 참조로 전환
+      지금은 주문 컨텍스트와 재고 컨텍스트가 객체 그래프로 묶여 있어 섹션 3 에서 통째로 뜯어야 함
+- [ ] 만료 시각의 정본을 하나로 — `Order.expire()` 가 `expireAt` 을 현재 시각으로 덮어써 마감 시각이 사라지고, `StockReservation.expireAt` 과 이중 관리됨
 - [ ] `Product` 엔티티의 클래스 레벨 `@Setter` 제거 — 도메인 모델을 분리할 때 가장 먼저 걸리는 지점
-- [ ] `jakarta.transaction.Transactional` → 스프링의 `@Transactional` (`readOnly` 사용 불가)
+- [ ] 도메인별 에러 코드를 각 도메인 패키지로 이동 (`ProductErrorCode` / `OrderErrorCode` / `StockErrorCode` / `ReservationErrorCode`)
+
+동작과 관련된 것
+
+- [ ] 낙관적 락 충돌(`ObjectOptimisticLockingFailureException`)을 409 로 변환 — 현재 500 으로 나감
+- [ ] `jakarta.transaction.Transactional` → 스프링의 `@Transactional` (`ProductService`, `readOnly` 사용 불가)
 - [ ] `ProductService.findById` 에 읽기 전용 트랜잭션 적용
-- [ ] `ProductErrorCode` 를 상품 도메인 패키지로 이동
 - [ ] `GlobalExceptionHandler` 슬라이스 테스트 추가 (현재 회귀 방지 없음)
+- [ ] `OrderController` 슬라이스 테스트 추가
 - [ ] 상품 목록 조회 엔드포인트 *(선택 — 주문 구현에는 불필요)*
 
 ### 섹션 3 이후
