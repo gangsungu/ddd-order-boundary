@@ -16,6 +16,7 @@ import com.roykhan.dddorderboundary.common.exception.StockErrorCode;
 import com.roykhan.dddorderboundary.domain.order.Order;
 import com.roykhan.dddorderboundary.domain.order.OrderItem;
 import com.roykhan.dddorderboundary.domain.order.dto.CreateOrderRequest;
+import com.roykhan.dddorderboundary.domain.order.dto.OrderInfo;
 import com.roykhan.dddorderboundary.domain.order.enums.OrderStatus;
 import com.roykhan.dddorderboundary.domain.order.repository.OrderRepository;
 import com.roykhan.dddorderboundary.domain.product.Product;
@@ -396,6 +397,46 @@ class OrderServiceTest {
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
 
             assertThat(stock.getAvailableQuantity()).isEqualTo(7);
+        }
+    }
+
+    @Nested
+    @DisplayName("findById")
+    class FindById {
+
+        @Test
+        @DisplayName("주문을 항목까지 담아 OrderInfo 로 반환한다")
+        void 조회_성공() {
+            Order order = Order.create(7L, LocalDateTime.now().plusMinutes(EXPIRE_MINUTES));
+            order.addItem(1L, "글렌피딕 12년", new BigDecimal("89000.00"), 2);
+            ReflectionTestUtils.setField(order, "id", 1L);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            OrderInfo info = orderService.findById(1L);
+
+            assertThat(info.id()).isEqualTo(1L);
+            assertThat(info.memberId()).isEqualTo(7L);
+            assertThat(info.orderStatus()).isEqualTo(OrderStatus.PENDING);
+            assertThat(info.totalPrice()).isEqualByComparingTo("178000.00");
+            assertThat(info.items()).singleElement().satisfies(item -> {
+                assertThat(item.productId()).isEqualTo(1L);
+                assertThat(item.productName()).isEqualTo("글렌피딕 12년");
+                assertThat(item.unitPrice()).isEqualByComparingTo("89000.00");
+                assertThat(item.quantity()).isEqualTo(2);
+                assertThat(item.amount()).isEqualByComparingTo("178000.00");
+            });
+        }
+
+        @Test
+        @DisplayName("주문이 없으면 ORDER_NOT_FOUND 로 실패한다")
+        void 조회_실패() {
+            given(orderRepository.findById(99L)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> orderService.findById(99L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage(OrderErrorCode.ORDER_NOT_FOUND.getMessage())
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
         }
     }
 }

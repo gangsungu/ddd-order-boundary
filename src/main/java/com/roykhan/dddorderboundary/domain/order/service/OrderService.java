@@ -3,6 +3,7 @@ package com.roykhan.dddorderboundary.domain.order.service;
 import com.roykhan.dddorderboundary.common.exception.OrderErrorCode;
 import com.roykhan.dddorderboundary.domain.order.Order;
 import com.roykhan.dddorderboundary.domain.order.dto.CreateOrderRequest;
+import com.roykhan.dddorderboundary.domain.order.dto.OrderInfo;
 import com.roykhan.dddorderboundary.domain.order.repository.OrderRepository;
 import com.roykhan.dddorderboundary.domain.product.Product;
 import com.roykhan.dddorderboundary.domain.product.repository.ProductRepository;
@@ -67,6 +68,12 @@ public class OrderService {
         }
 
         return order.getId();
+    }
+
+    // 항목까지 트랜잭션 안에서 DTO 로 옮긴다 (open-in-view: false)
+    @Transactional(readOnly = true)
+    public OrderInfo findById(long orderId) {
+        return OrderInfo.from(getOrder(orderId));
     }
 
     @Transactional
