@@ -12,9 +12,9 @@ public record CreateOrderRequest(
 
     @NotEmpty(message = "주문 항목은 최소 1개 이상이어야 합니다.")
     @Valid
-    List<OrderItem> items
+    List<OrderLine> items
 ) {
-    public record OrderItem(
+    public record OrderLine(
         @NotNull(message = "상품 ID는 필수입니다.")
         Long productId,
 
