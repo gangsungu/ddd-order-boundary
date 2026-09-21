@@ -11,7 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.roykhan.dddorderboundary.common.config.JacksonConfig;
 import com.roykhan.dddorderboundary.order.domain.exception.OrderErrorCode;
-import com.roykhan.dddorderboundary.payment.application.service.PaymentService;
+import com.roykhan.dddorderboundary.payment.application.usecase.PaymentUseCase;
 import com.roykhan.dddorderboundary.payment.domain.model.PaymentResult;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,7 +31,7 @@ class PaymentControllerTest {
     private MockMvc mockMvc;
 
     @MockitoBean
-    private PaymentService paymentService;
+    private PaymentUseCase paymentUseCase;
 
     @Test
     @DisplayName("POST /api/payment/{orderId}/result - 경로의 주문 ID 와 결제 결과를 서비스에 넘긴다")
@@ -46,7 +46,7 @@ class PaymentControllerTest {
             .andExpect(jsonPath("$.message").value("결제 결과를 반영하였습니다."))
             .andExpect(jsonPath("$.data").doesNotExist());
 
-        verify(paymentService).applyResult(7L, PaymentResult.SUCCESS);
+        verify(paymentUseCase).applyResult(7L, PaymentResult.SUCCESS);
     }
 
     @Test
@@ -59,7 +59,7 @@ class PaymentControllerTest {
             .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
             .andExpect(jsonPath("$.data.result").value("결제 결과는 필수입니다."));
 
-        verify(paymentService, never()).applyResult(anyLong(), any());
+        verify(paymentUseCase, never()).applyResult(anyLong(), any());
     }
 
     @Test
@@ -73,14 +73,14 @@ class PaymentControllerTest {
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
 
-        verify(paymentService, never()).applyResult(anyLong(), any());
+        verify(paymentUseCase, never()).applyResult(anyLong(), any());
     }
 
     @Test
     @DisplayName("POST /api/payment/{orderId}/result - 이미 확정된 주문이면 409 ORDER_ALREADY_CONFIRMED 로 실패한다")
     void 이미_확정된_주문() throws Exception {
         doThrow(OrderErrorCode.ORDER_ALREADY_CONFIRMED.exception())
-            .when(paymentService).applyResult(7L, PaymentResult.SUCCESS);
+            .when(paymentUseCase).applyResult(7L, PaymentResult.SUCCESS);
 
         mockMvc.perform(post("/api/payment/{orderId}/result", 7L)
                 .contentType(MediaType.APPLICATION_JSON)

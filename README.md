@@ -16,7 +16,7 @@
 | 3 | 분산 시스템 설계 (CQRS, Event-Driven, ACL, Saga) | |
 | 4 | Kafka & gRPC 실습 | |
 
-현재 진행 상황: **섹션 2 진행 중** — 주문 생성·조회·취소, 재고 예약, 목업 결제, 재고 조회와 예약 만료 스케줄러까지 구현했습니다. 지금은 헥사고날 전환을 단계별로 진행하고 있습니다 ([진행 상황](#헥사고날-전환-계획))
+현재 진행 상황: **섹션 2** — 주문 생성·조회·취소, 재고 예약, 목업 결제, 재고 조회, 예약 만료 스케줄러를 구현하고 세 컨텍스트 모두 헥사고날(Ports & Adapters) 구조로 전환했습니다 ([전환 기록](#헥사고날-전환-계획)). 남은 것은 [정리 대상](#정리-대상)입니다
 
 ---
 
@@ -156,9 +156,14 @@ src/main/java/com/roykhan/dddorderboundary
 │       │   ├── ProductController.java
 │       │   └── StockController.java
 │       └── dto/ProductRegisterRequest.java  # 등록/수정 요청 → 커맨드로 변환
-└── payment                              # 결제 컨텍스트 (목업) — 상태 없이 결과만 주문에 전달
+└── payment                              # 결제 컨텍스트 (목업) — 상태 없이 결과만 주문에 알린다
     ├── domain/model/PaymentResult.java  # SUCCESS / FAILURE
-    ├── application/service/PaymentService.java  # 결과를 주문 확정·결제 실패 호출로 변환
+    ├── application
+    │   ├── usecase/PaymentUseCase.java  # 입력 포트
+    │   ├── service/PaymentApplicationService.java  # 결과를 성공·실패 알림으로 변환
+    │   └── port/OrderPort.java          # 출력 포트 — 결제 결과를 주문에 알린다 (결제 쪽 언어)
+    ├── infrastructure
+    │   └── order/OrderAdapter.java      # 출력 어댑터 — 알림을 주문 유스케이스 호출(확정·결제 실패)로 옮긴다
     └── presentation
         ├── controller/PaymentController.java
         └── dto/PaymentResultRequest.java
@@ -168,7 +173,7 @@ docs/섹션1                                # 섹션 1 미션 산출물 (설계 
 docs/섹션2-데모.http                       # 라이브 데모 시나리오
 ```
 
-컨텍스트마다 `domain / application / infrastructure / presentation` 으로 나눕니다. 지금은 상품·주문 컨텍스트까지 포트·어댑터를 들였고, 결제는 아직 패키지만 나눈 상태라 `infrastructure` 가 없습니다. 목표 구조와 순서, 지금 남아 있는 의존은 [헥사고날 전환 계획](#헥사고날-전환-계획)에 정리했습니다.
+컨텍스트마다 `domain / application / infrastructure / presentation` 으로 나눕니다. 다른 컨텍스트는 자기 출력 포트로만 부르고, 그 포트를 구현하는 `infrastructure` 의 어댑터만 상대 컨텍스트를 압니다. 전환 순서와 컨텍스트별 포트·어댑터, 컨텍스트 사이 호출 관계는 [헥사고날 전환 계획](#헥사고날-전환-계획)에 정리했습니다.
 
 재고를 `Product` 가 아닌 별도 엔티티로 둔 것은 컨텍스트를 나눈 것이 아닙니다. 재고는 상품 컨텍스트가 소유하되, 쓰기 경합과 변경 주체가 달라 애그리거트만 분리했습니다. 그래서 패키지도 따로 두지 않고 `product` 컨텍스트 안에 함께 둡니다.
 
@@ -306,7 +311,8 @@ OrderApplicationService.confirmOrder(orderId)
       예약과 복원이 실제로 일어났는지 확인할 수단이 없어 데모에 필요
 - [x] **예약 만료 스케줄러** — 미확정 예약을 배치로 해제
       결제 마감이 지난 `PENDING` 주문을 주기적으로 만료시켜 재고를 돌려준다
-- [ ] **헥사고날(Ports & Adapters) 전환** — 단계마다 브랜치를 나눠 진행 ([계획](#헥사고날-전환-계획))
+- [x] **헥사고날(Ports & Adapters) 전환** — 단계마다 브랜치를 나눠 진행 ([기록](#헥사고날-전환-계획))
+      세 컨텍스트 모두 입력 포트(유스케이스)와 출력 포트·어댑터를 갖췄다
 
 > 주문을 먼저 만드는 이유: 주문 생성이 상품 컨텍스트를 조회해야 해서 출력 포트가 자연스럽게 필요해집니다.
 > 상품 하나만으로는 포트가 리포지토리뿐이라 포트/어댑터 분리의 효과가 드러나지 않습니다.
@@ -324,7 +330,7 @@ OrderApplicationService.confirmOrder(orderId)
 | 2 | `refactor/hexagonal-packages` | 모든 컨텍스트를 새 패키지 구조로 이동 — 동작과 호출 관계는 그대로, `BaseEntity`·에러 코드도 제자리로 | 완료 |
 | 3 | `refactor/hexagonal-product` | 상품 컨텍스트(상품·재고) — 저장소 포트와 어댑터, 상품·재고 유스케이스 | 완료 |
 | 4 | `refactor/hexagonal-order` | 주문 컨텍스트 — 상품·재고를 부르는 출력 포트와 어댑터 | 완료 |
-| 5 | `refactor/hexagonal-payment` | 결제 컨텍스트 — 주문을 부르는 출력 포트와 어댑터 | |
+| 5 | `refactor/hexagonal-payment` | 결제 컨텍스트 — 주문을 부르는 출력 포트와 어댑터 | 완료 |
 
 - 연관을 먼저 끊는 이유: 끊지 않고 옮기면 상품 컨텍스트로 간 `StockReservation` 이 주문 엔티티를 import 해, 컨텍스트 경계가 코드에서부터 깨집니다.
 - 패키지 이동을 따로 떼는 이유: 이동만 하는 브랜치는 git 이 이름 변경으로 보여 줘 리뷰가 쉽고, 이후 브랜치의 diff 에는 포트·어댑터만 남습니다. 옛 구조와 새 구조가 섞이는 기간도 생기지 않습니다. 대신 2단계 직후에는 폴더만 헥사고날 모양이고, 서비스가 다른 컨텍스트를 직접 부르는 상태가 3~5단계까지 남습니다.
@@ -393,17 +399,52 @@ OrderApplicationService                              application/service
 - 출력 포트는 주문 쪽 언어로 정의합니다. 주문은 상품의 설명이나 재고 예약 커맨드의 모양을 모르고, 필요한 것만 자기 타입으로 받습니다. 주문의 `domain` · `application` · `presentation` 에는 상품 컨텍스트 import 가 하나도 없고, 상품을 아는 곳은 `infrastructure/product` 의 어댑터 둘뿐입니다.
 - 다른 컨텍스트로 나가는 포트는 `domain/repository` 가 아니라 `application/port` 에 둡니다. 저장소는 주문 애그리거트를 저장하는 도메인의 필요이고, 상품·재고 호출은 유스케이스를 수행하려는 애플리케이션의 필요이기 때문입니다.
 - 어댑터는 같은 JVM 안에서 상품 컨텍스트의 유스케이스를 부르므로, 재고 변경이 주문 트랜잭션에 함께 묶입니다. 재고보다 많이 주문하면 주문 저장까지 함께 되돌아갑니다. 섹션 3 에서 네트워크 호출로 바꾸면 이 보장이 사라지므로 어댑터를 교체하면서 보상 흐름(Saga)을 따로 세워야 합니다.
-- 서비스는 요청 DTO 대신 `CreateOrderCommand` 를 받습니다. 결제 컨텍스트도 이제 `OrderService` 가 아닌 `OrderUseCase` 로 주문을 부릅니다.
+- 서비스는 요청 DTO 대신 `CreateOrderCommand` 를 받습니다.
+
+**결제 컨텍스트** (5단계)
+
+```text
+PaymentController                                    presentation          입력 어댑터
+      │  PaymentUseCase                              application/usecase   입력 포트
+      ▼
+PaymentApplicationService                            application/service
+      └─ OrderPort                                   application/port      출력 포트 ─→ OrderAdapter → OrderUseCase (주문 컨텍스트)
+```
+
+| 구분 | 이름 | 설명 |
+|---|---|---|
+| 입력 포트 | `PaymentUseCase` | 결제 결과(`SUCCESS` · `FAILURE`) 반영. 지금은 목업 결제 페이지가 PG 콜백 대신 부른다 |
+| 출력 포트 | `OrderPort` | `notifyPaymentSucceeded` · `notifyPaymentFailed` — 결제 결과를 주문에 알린다 |
+| 출력 어댑터 | `OrderAdapter` | 성공 알림은 `OrderUseCase.confirmOrder`, 실패 알림은 `OrderUseCase.failPayment` 로 옮긴다 |
+
+- 출력 포트는 결제 쪽 언어로 정의합니다. 결제는 "주문을 확정한다"가 아니라 "결제가 성공했다"만 말하고, 그 결과로 주문이 무엇을 할지(확정, 예약 해제)는 주문이 정합니다. 둘을 잇는 번역은 어댑터가 맡습니다.
+- 알림 모양으로 둔 것은 섹션 3 을 위해서입니다. 결제 결과를 이벤트(`PaymentSucceeded` · `PaymentFailed`)로 발행하게 되면 `OrderAdapter` 만 메시지 발행 어댑터로 바꾸고 결제 서비스는 그대로 둡니다.
+- 결제는 목업이라 저장할 상태가 없어 저장소 포트가 없습니다. 실제 PG 연동 때 결제 애그리거트와 저장소 포트가 생깁니다.
+
+#### 전환 후 컨텍스트 사이 호출
+
+```text
+결제                              주문                                         상품 (상품·재고)
+PaymentApplicationService
+  └─ OrderPort ── OrderAdapter ──→ OrderUseCase
+                                   OrderApplicationService
+                                     ├─ ProductPort ── ProductAdapter ──→ ProductUseCase
+                                     └─ StockPort ──── StockAdapter ────→ StockUseCase
+```
+
+- 의존은 결제 → 주문 → 상품 한 방향이고, 되돌아오는 호출은 없습니다.
+- 세 컨텍스트 모두 `domain` · `application` · `presentation` 에 다른 컨텍스트 import 가 없습니다. 다른 컨텍스트를 아는 파일은 어댑터 셋(`order/infrastructure/product` 의 둘, `payment/infrastructure/order` 의 하나)뿐이고, 그 어댑터도 상대의 유스케이스와 DTO 만 부릅니다.
+- 섹션 3 에서 컨텍스트를 서비스로 떼어 내면 바뀌는 곳은 이 세 어댑터입니다. 호출이 네트워크를 건너면서 한 트랜잭션으로 묶이던 보장이 사라지므로, 그때 보상 흐름(Saga)과 번역 계층(ACL)을 세웁니다.
 
 #### 지금 남은 의존
 
 | 위치 | 지금 남은 의존 | 없애는 단계 |
 |---|---|---|
-| `PaymentService` | 주문 컨텍스트의 `OrderUseCase` 를 직접 호출 | 5 결제 — 주문 출력 포트와 어댑터 |
 | 재고 포트의 예외 | 상품 컨텍스트의 에러 코드(`OUT_OF_STOCK` · `RESERVATION_EXPIRED` 등)가 번역 없이 주문 API 응답까지 그대로 나간다 | 섹션 3 — ACL 에서 주문 쪽 의미로 번역 |
+| 주문 포트의 예외 | 결제 결과를 반영할 수 없는 주문이면 주문 컨텍스트의 에러 코드(`ORDER_ALREADY_CONFIRMED` 등)가 결제 API 응답으로 그대로 나간다 | 섹션 3 — ACL 에서 결제 쪽 의미로 번역 |
 
 - 저장소 인터페이스는 2단계부터 포트 자리(`domain/repository`)에 두었습니다. 상품·주문 컨텍스트에서 포트와 어댑터로 쪼갤 때 서비스 코드는 저장소 쪽으로 바뀌지 않았습니다.
-- 서비스 이름은 유스케이스 인터페이스(입력 포트)를 들이는 단계에서 `*ApplicationService` 로 바꿉니다. (상품 3단계, 주문 4단계)
+- 서비스 이름은 유스케이스 인터페이스(입력 포트)를 들이는 단계에서 `*ApplicationService` 로 바꿨습니다. (상품 3단계, 주문 4단계, 결제 5단계)
 - enum 은 따로 `enums` 패키지를 두지 않고 모델과 함께 `domain/model` 에 둡니다.
 
 ### 정리 대상
@@ -437,6 +478,7 @@ OrderApplicationService                              application/service
 
 - 결제 · 정산 컨텍스트 — 목업 결제를 실제 PG 연동으로 교체하고 정산 배치 추가
 - CQRS, Event-Driven, ACL / Kafka, gRPC
+- 컨텍스트 사이 어댑터 셋(`ProductAdapter` · `StockAdapter` · `OrderAdapter`)을 네트워크·메시지 어댑터로 교체하고, 그에 맞춰 Saga 와 ACL 을 세운다 ([전환 후 컨텍스트 사이 호출](#전환-후-컨텍스트-사이-호출))
 
 > 설계 문서의 상품 컨텍스트에는 판매상태·재고·판매자 ID 가 있지만 엔티티에는 반영하지 않았습니다.
 > 모놀리식은 간단히 두고 아키텍처 전환에 집중하는 것이 섹션 2의 목적이라, 의도적으로 맞추지 않았습니다.
