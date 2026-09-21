@@ -16,7 +16,7 @@
 | 3 | 분산 시스템 설계 (CQRS, Event-Driven, ACL, Saga) | |
 | 4 | Kafka & gRPC 실습 | |
 
-현재 진행 상황: **섹션 2 진행 중** — 주문 생성·조회·취소, 재고 예약, 목업 결제와 재고 조회까지 구현했습니다. 예약 만료 스케줄러와 헥사고날 전환이 남았습니다
+현재 진행 상황: **섹션 2 진행 중** — 주문 생성·조회·취소, 재고 예약, 목업 결제, 재고 조회와 예약 만료 스케줄러까지 구현했습니다. 헥사고날 전환이 남았습니다
 
 ---
 
@@ -56,7 +56,11 @@ H2 는 `MODE=PostgreSQL` 호환 모드로 동작합니다. 3주차 분산 시스
 
 > 상태 enum 에 값이 추가되면 `./data` 를 지우고 다시 실행해야 합니다. H2 에서는 상태 컬럼이 허용 값을 가진 `ENUM` 타입으로 만들어지고 `ddl-auto: update` 는 기존 컬럼 타입을 바꾸지 않아, 새 값을 저장할 때 500 이 납니다. (예: `OrderStatus.PAYMENT_FAILED` 추가 이전에 만든 DB)
 
-API 를 순서대로 찔러볼 수 있는 시나리오는 [`docs/섹션2-데모.http`](docs/섹션2-데모.http) 에 있습니다. IntelliJ HTTP Client 로 위에서부터 실행하면 상품 등록 → 주문 → 재고 예약 → 결제 확정·실패 → 취소·복원 흐름을 그대로 따라갈 수 있습니다. 예약 만료 구간은 스케줄러 구현 전이라 동작하지 않습니다.
+API 를 순서대로 찔러볼 수 있는 시나리오는 [`docs/섹션2-데모.http`](docs/섹션2-데모.http) 에 있습니다. IntelliJ HTTP Client 로 위에서부터 실행하면 상품 등록 → 주문 → 재고 예약 → 결제 확정·실패 → 취소·복원 → 예약 만료 흐름을 그대로 따라갈 수 있습니다. 결제 마감은 기본 10분이라, 예약 만료 구간을 데모에서 바로 보려면 마감과 스케줄러 주기를 줄여서 띄웁니다.
+
+```bash
+./gradlew bootRun --args='--order.reservation.expire-time=1 --order.reservation.expire-check-interval=5'
+```
 
 결제는 브라우저에서도 할 수 있습니다. <http://localhost:8080/payment.html?orderId=1> 을 열면 주문 내역과 상품별 재고(총 재고·가용·예약)가 보이고, **결제 성공** / **결제 실패** 버튼으로 결과를 보낼 수 있습니다.
 
@@ -70,7 +74,8 @@ src/main/java/com/roykhan/dddorderboundary
 ├── common
 │   ├── config
 │   │   ├── JacksonConfig.java           # ApiResponse 전용 직렬화 모듈 등록
-│   │   └── JpaAuditingConfig.java
+│   │   ├── JpaAuditingConfig.java
+│   │   └── SchedulingConfig.java        # @EnableScheduling (슬라이스 테스트에서 빠지도록 분리)
 │   ├── controller
 │   │   └── HealthController.java
 │   ├── exception
@@ -95,6 +100,7 @@ src/main/java/com/roykhan/dddorderboundary
     │   │   ├── OrderCreateInfo.java     # 생성 응답 (주문 ID)
     │   │   └── OrderInfo.java           # 조회 응답 (항목 내역 포함)
     │   ├── repository/OrderRepository.java
+    │   ├── scheduler/OrderExpirationScheduler.java  # 결제 마감이 지난 주문 만료
     │   └── service/OrderService.java
     ├── payment                          # 목업 결제 — 상태 없이 결과만 주문에 전달
     │   ├── enums/PaymentResult.java     # SUCCESS / FAILURE
@@ -171,13 +177,20 @@ docs/섹션2-데모.http                       # 라이브 데모 시나리오
 | `CONFIRMED` | 결제 성공 | 총 재고 차감 | `CONFIRMED` |
 | `PAYMENT_FAILED` | 결제 실패 | 가용 수량 복원 | `CANCELLED` |
 | `CANCELLED` | 사용자 취소 | 가용 수량 복원 | `CANCELLED` |
-| `EXPIRED` | 예약 만료 *(배치 미구현)* | 가용 수량 복원 | `EXPIRED` |
+| `EXPIRED` | 결제 마감 경과 (스케줄러) | 가용 수량 복원 | `EXPIRED` |
 
 취소와 결제 결과 반영은 `PENDING` 에서만 가능합니다. 확정된 주문의 취소는 환불이라 결제 취소가 선행되어야 하므로 섹션 3 범위입니다. 사용자 취소·결제 실패·시간 만료를 주문 상태로 구분해 남기고, 예약 해제는 `RESERVED` 상태에서만 허용해 재고가 중복 복원되지 않게 합니다. 결제 실패로 인한 해제는 재고 입장에서 사용자 취소와 다르지 않아 예약은 `CANCELLED` 로 남기고, 실패 사유는 주문 상태가 가집니다.
 
 재고 조회의 예약 수량은 따로 저장하지 않고 `총 재고 - 가용 수량` 으로 계산합니다. 예약은 가용 수량만, 확정은 총 재고만 줄이므로 둘의 차이가 곧 확정을 기다리는 수량입니다.
 
-결제 마감(`expireAt`)이 지난 예약은 결제에 성공해도 `RESERVATION_EXPIRED` 로 거절합니다. 반대로 결제 실패는 마감 이후에도 받아 재고를 돌려줍니다. 만료 스케줄러가 생기기 전까지는 이 경로가 재고를 되돌리는 유일한 수단입니다.
+결제 마감(`expireAt`)이 지난 예약은 결제에 성공해도 `RESERVATION_EXPIRED` 로 거절합니다. 반대로 결제 실패는 마감 이후에도 받아 재고를 돌려줍니다. 마감이 지나고 스케줄러가 돌기 전까지의 짧은 구간에서 두 경우가 갈립니다.
+
+만료 스케줄러(`OrderExpirationScheduler`)는 `order.reservation.expire-check-interval`(기본 30초)마다 결제 마감이 지난 `PENDING` 주문을 마감이 이른 순으로 최대 100건씩 만료시킵니다.
+
+- 주문마다 트랜잭션을 따로 잡아 한 건이 실패해도 나머지 만료는 되돌아가지 않습니다.
+- ID 를 읽은 뒤 결제·취소가 먼저 끝난 주문은 `Order.expire()` 의 상태 검사에서 걸러져 건너뜁니다.
+- 결제·취소와 같은 재고를 동시에 바꾸면 `Stock` 의 낙관적 락이 한쪽을 되돌립니다. 만료가 밀려났다면 주문이 아직 `PENDING` 이라 다음 주기에 다시 잡힙니다.
+- 만료해도 결제 마감 시각은 그대로 두고, 풀린 시각은 `cancelledAt` 에 남깁니다.
 
 주문 항목(`OrderItem`)은 주문 시점의 상품명과 단가를 복사해 둡니다. 이후 상품 가격이 바뀌어도 이미 끝난 주문의 금액은 달라지지 않고, 조회할 때 상품을 다시 읽지 않습니다. 설계 문서의 **"시점이 중요한 값은 복사한다"** 원칙을 구현한 부분입니다.
 
@@ -243,8 +256,8 @@ docs/섹션2-데모.http                       # 라이브 데모 시나리오
       성공은 예약 확정, 실패는 재고 복원 (보상 트랜잭션)
 - [x] **재고 조회 API** — `GET /api/product/{productId}/stock`
       예약과 복원이 실제로 일어났는지 확인할 수단이 없어 데모에 필요
-- [ ] **예약 만료 스케줄러** — 미확정 예약을 배치로 해제
-      `expireAt` 과 `isExpired()` 는 있고 배치만 없음
+- [x] **예약 만료 스케줄러** — 미확정 예약을 배치로 해제
+      결제 마감이 지난 `PENDING` 주문을 주기적으로 만료시켜 재고를 돌려준다
 - [ ] **패키지 구조를 헥사고날로 전환** — Ports & Adapters
 
 > 주문을 먼저 만드는 이유: 주문 생성이 상품 컨텍스트를 조회해야 해서 출력 포트가 자연스럽게 필요해집니다.
@@ -259,7 +272,8 @@ docs/섹션2-데모.http                       # 라이브 데모 시나리오
 
 - [ ] `Order` ↔ `StockReservation` 양방향 JPA 연관을 `orderId` 참조로 전환
       지금은 주문 컨텍스트와 재고 컨텍스트가 객체 그래프로 묶여 있어 섹션 3 에서 통째로 뜯어야 함
-- [ ] 만료 시각의 정본을 하나로 — `Order.expire()` 가 `expireAt` 을 현재 시각으로 덮어써 마감 시각이 사라지고, `StockReservation.expireAt` 과 이중 관리됨
+- [ ] 만료 시각의 정본을 하나로 — `Order.expireAt` 과 `StockReservation.expireAt` 이 이중 관리됨
+      스케줄러는 주문의 마감을, 결제 확정은 예약의 마감을 본다. 지금은 생성 시 같은 값을 넣어 어긋나지 않을 뿐이다
 - [ ] `Product` 엔티티의 클래스 레벨 `@Setter` 제거 — 도메인 모델을 분리할 때 가장 먼저 걸리는 지점
 - [ ] 도메인별 에러 코드를 각 도메인 패키지로 이동 (`ProductErrorCode` / `OrderErrorCode` / `StockErrorCode` / `ReservationErrorCode`)
 

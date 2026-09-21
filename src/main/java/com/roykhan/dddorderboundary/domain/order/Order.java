@@ -107,17 +107,17 @@ public class Order extends BaseEntity {
         reservations.forEach(StockReservation::cancelByPaymentFailure);
     }
 
-    // 주문 만료
-    // 점유한 재고 반환
+    // 주문 만료 - 결제 마감까지 결제되지 않은 주문
+    // 점유한 재고 반환. 마감 시각(expireAt)은 그대로 두고 풀린 시각만 남긴다
     public void expire() {
+        checkPending();
         this.orderStatus = OrderStatus.EXPIRED;
-        this.expireAt = LocalDateTime.now();
         this.cancelledAt = LocalDateTime.now();
 
         reservations.forEach(StockReservation::cancelByExpiration);
     }
 
-    // 취소와 결제 결과 반영은 결제 대기 중인 주문에서만 가능하다.
+    // 취소·결제 결과 반영·만료는 결제 대기 중인 주문에서만 가능하다.
     // 확정된 주문의 취소는 환불이라 결제 취소가 선행되어야 하고, 이는 섹션 3 범위다.
     private void checkPending() {
         if(this.orderStatus == OrderStatus.CANCELLED) {

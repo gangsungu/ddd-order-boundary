@@ -18,4 +18,5 @@ spring:
       path: /h2-console
 order:
   reservation:
-    expire-time: 10
+    expire-time: 10            # 결제 마감까지 (분)
+    expire-check-interval: 30  # 만료 스케줄러 주기 (초)

@@ -140,7 +140,9 @@ Content-Type: application/json
 }
 
 ###############################################################################
-# 4. 예약 만료 — 결제하지 않고 방치 (만료 스케줄러 미구현)
+# 4. 예약 만료 — 결제하지 않고 방치
+# 결제 마감이 기본 10분이라 데모에서는 마감과 스케줄러 주기를 줄여서 띄운다
+#   ./gradlew bootRun --args='--order.reservation.expire-time=1 --order.reservation.expire-check-interval=5'
 ###############################################################################
 
 ### 주문 생성 후 결제하지 않음
@@ -159,11 +161,19 @@ Content-Type: application/json
 ### 재고 확인 — 8 / 4 / 4
 GET {{host}}/api/product/{{productId}}/stock
 
-### (만료 스케줄러가 돌 때까지 대기) 재고 확인 — 8 / 8 / 0
+### (결제 마감이 지나고 스케줄러가 돌 때까지 대기) 재고 확인 — 8 / 8 / 0
 GET {{host}}/api/product/{{productId}}/stock
 
-### 주문 조회 — EXPIRED
+### 주문 조회 — EXPIRED, 결제 마감(expireAt)은 그대로이고 풀린 시각은 cancelledAt
 GET {{host}}/api/order/{{expireOrderId}}
+
+### 만료된 주문에 결제 결과 — 409 ORDER_ALREADY_EXPIRED
+POST {{host}}/api/payment/{{expireOrderId}}/result
+Content-Type: application/json
+
+{
+  "result": "SUCCESS"
+}
 
 ###############################################################################
 # 5. 실패 케이스

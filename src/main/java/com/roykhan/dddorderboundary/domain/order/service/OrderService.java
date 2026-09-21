@@ -4,6 +4,7 @@ import com.roykhan.dddorderboundary.common.exception.OrderErrorCode;
 import com.roykhan.dddorderboundary.domain.order.Order;
 import com.roykhan.dddorderboundary.domain.order.dto.CreateOrderRequest;
 import com.roykhan.dddorderboundary.domain.order.dto.OrderInfo;
+import com.roykhan.dddorderboundary.domain.order.enums.OrderStatus;
 import com.roykhan.dddorderboundary.domain.order.repository.OrderRepository;
 import com.roykhan.dddorderboundary.domain.product.Product;
 import com.roykhan.dddorderboundary.domain.product.repository.ProductRepository;
@@ -18,6 +19,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -97,6 +99,19 @@ public class OrderService {
     @Transactional
     public void failPayment(long orderId) {
         getOrder(orderId).failPayment();
+    }
+
+    // 결제 마감이 지난 PENDING 주문 ID
+    @Transactional(readOnly = true)
+    public List<Long> findExpiredOrderIds(LocalDateTime now, int limit) {
+        return orderRepository.findIdsByStatusAndExpireAtBefore(OrderStatus.PENDING, now, PageRequest.of(0, limit));
+    }
+
+    // 주문 만료 - 예약을 해제해 재고를 복원한다
+    // 스케줄러가 주문마다 따로 호출해 한 건의 실패가 다른 주문의 만료를 되돌리지 않게 한다
+    @Transactional
+    public void expireOrder(long orderId) {
+        getOrder(orderId).expire();
     }
 
     private Order getOrder(long orderId) {
