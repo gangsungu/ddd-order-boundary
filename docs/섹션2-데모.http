@@ -1,6 +1,7 @@
 ### 섹션 2 라이브 데모 시나리오
 ### 주문 → 재고 예약 → 목업 결제 → 확정 / 보상(복원)
 ### IntelliJ HTTP Client 로 위에서부터 순서대로 실행
+### 재고 확인 주석은 "총 재고 / 가용 / 예약" 순서
 
 @host = http://localhost:8080
 
@@ -8,7 +9,7 @@
 @productId = 1
 
 ###############################################################################
-# 0. 준비 — 상품 등록과 입고
+# 0. 준비 — 상품 등록
 ###############################################################################
 
 ### 상품 등록 (초기 재고 10)
@@ -22,15 +23,7 @@ Content-Type: application/json
   "initialQuantity": 10
 }
 
-### 재고 조정 (입고) — 가용 10 으로 세팅
-PATCH {{host}}/api/product/{{productId}}/stock
-Content-Type: application/json
-
-{
-  "quantity": 10
-}
-
-### 재고 확인 — 가용 10 / 예약 0
+### 재고 확인 — 10 / 10 / 0
 GET {{host}}/api/product/{{productId}}/stock
 
 ###############################################################################
@@ -50,7 +43,7 @@ Content-Type: application/json
 
 > {% client.global.set("orderId", response.body.data.orderId); %}
 
-### 재고 확인 — 가용 8 / 예약 2 (아직 차감 확정 아님)
+### 재고 확인 — 10 / 8 / 2 (가용 수량만 예약으로 넘어가고 총 재고는 그대로)
 GET {{host}}/api/product/{{productId}}/stock
 
 ### 주문 조회 — PENDING, 주문 시점 상품명·단가 스냅샷 확인
@@ -65,7 +58,7 @@ Content-Type: application/json
   "result": "SUCCESS"
 }
 
-### 재고 확인 — 가용 8 / 예약 0 (예약이 소멸하며 차감 확정)
+### 재고 확인 — 8 / 8 / 0 (예약이 확정되며 총 재고가 차감)
 GET {{host}}/api/product/{{productId}}/stock
 
 ### 주문 조회 — CONFIRMED
@@ -88,7 +81,7 @@ Content-Type: application/json
 
 > {% client.global.set("failOrderId", response.body.data.orderId); %}
 
-### 재고 확인 — 가용 5 / 예약 3
+### 재고 확인 — 8 / 5 / 3
 GET {{host}}/api/product/{{productId}}/stock
 
 ### 결제 실패 — 예약 해제, 재고 복원
@@ -100,27 +93,54 @@ Content-Type: application/json
   "result": "FAILURE"
 }
 
-### 재고 확인 — 가용 8 / 예약 0 으로 원복
+### 재고 확인 — 8 / 8 / 0 으로 원복
 GET {{host}}/api/product/{{productId}}/stock
 
 ### 주문 조회 — PAYMENT_FAILED
 GET {{host}}/api/order/{{failOrderId}}
 
 ###############################################################################
-# 3. 주문 취소 — 확정된 주문 되돌리기
+# 3. 주문 취소 — 결제 전 주문만 취소할 수 있다
 ###############################################################################
 
-### 1번에서 확정한 주문 취소
-PATCH {{host}}/api/order/{{orderId}}/cancel
+### 주문 생성 (2개) 후 결제하지 않음
+POST {{host}}/api/order
+Content-Type: application/json
 
-### 재고 확인 — 가용 10 으로 복원
+{
+  "memberId": 1,
+  "items": [
+    { "productId": {{productId}}, "quantity": 2 }
+  ]
+}
+
+> {% client.global.set("cancelOrderId", response.body.data.orderId); %}
+
+### 재고 확인 — 8 / 6 / 2
 GET {{host}}/api/product/{{productId}}/stock
 
-### 같은 주문 다시 취소 — 409 ORDER_ALREADY_CANCELED
+### 주문 취소 — 예약 해제
+PATCH {{host}}/api/order/{{cancelOrderId}}/cancel
+
+### 재고 확인 — 8 / 8 / 0 으로 복원
+GET {{host}}/api/product/{{productId}}/stock
+
+### 같은 주문 다시 취소 — 409 ORDER_ALREADY_CANCELLED
+PATCH {{host}}/api/order/{{cancelOrderId}}/cancel
+
+### 1번에서 확정한 주문 취소 — 409 ORDER_ALREADY_CONFIRMED (환불은 결제 취소가 선행되어야 해 섹션 3 범위)
 PATCH {{host}}/api/order/{{orderId}}/cancel
 
+### 확정한 주문에 결제 결과 다시 보내기 — 409 ORDER_ALREADY_CONFIRMED
+POST {{host}}/api/payment/{{orderId}}/result
+Content-Type: application/json
+
+{
+  "result": "FAILURE"
+}
+
 ###############################################################################
-# 4. 예약 만료 — 결제하지 않고 방치
+# 4. 예약 만료 — 결제하지 않고 방치 (만료 스케줄러 미구현)
 ###############################################################################
 
 ### 주문 생성 후 결제하지 않음
@@ -136,10 +156,10 @@ Content-Type: application/json
 
 > {% client.global.set("expireOrderId", response.body.data.orderId); %}
 
-### 재고 확인 — 가용 6 / 예약 4
+### 재고 확인 — 8 / 4 / 4
 GET {{host}}/api/product/{{productId}}/stock
 
-### (만료 스케줄러가 돌 때까지 대기) 재고 확인 — 가용 10 / 예약 0
+### (만료 스케줄러가 돌 때까지 대기) 재고 확인 — 8 / 8 / 0
 GET {{host}}/api/product/{{productId}}/stock
 
 ### 주문 조회 — EXPIRED
@@ -160,7 +180,7 @@ Content-Type: application/json
   ]
 }
 
-### 없는 상품 주문 — 404 PRODUCT_NOT_FOUND
+### 없는 상품 주문 — 400 INVALID_ORDER_ITEM
 POST {{host}}/api/order
 Content-Type: application/json
 
@@ -181,4 +201,20 @@ Content-Type: application/json
 {
   "memberId": 1,
   "items": []
+}
+
+### 없는 주문에 결제 결과 — 404 ORDER_NOT_FOUND
+POST {{host}}/api/payment/99999/result
+Content-Type: application/json
+
+{
+  "result": "SUCCESS"
+}
+
+### 정해지지 않은 결제 결과 — 400 INVALID_REQUEST
+POST {{host}}/api/payment/{{orderId}}/result
+Content-Type: application/json
+
+{
+  "result": "MAYBE"
 }

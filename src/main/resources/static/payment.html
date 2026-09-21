@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>목업 결제</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 560px; margin: 40px auto; padding: 0 16px; color: #222; }
+        h1 { font-size: 1.4rem; }
+        .notice { color: #666; font-size: 0.9rem; }
+        .row { display: flex; gap: 8px; margin: 16px 0; }
+        input { flex: 1; padding: 8px; font-size: 1rem; }
+        button { padding: 8px 16px; font-size: 1rem; cursor: pointer; border: 1px solid #aaa; border-radius: 4px; background: #fff; }
+        button:disabled { cursor: not-allowed; opacity: 0.4; }
+        #success { background: #1f7a3a; border-color: #1f7a3a; color: #fff; }
+        #failure { background: #b3261e; border-color: #b3261e; color: #fff; }
+        table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+        th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #eee; }
+        td.num, th.num { text-align: right; }
+        #message { padding: 10px; border-radius: 4px; display: none; }
+        #message.ok { display: block; background: #e7f4ea; }
+        #message.error { display: block; background: #fbeaea; }
+    </style>
+</head>
+<body>
+<h1>목업 결제</h1>
+<p class="notice">실제 PG 연동 없이 결제 결과만 주문에 전달합니다. 성공이면 예약한 재고가 확정되고, 실패면 예약이 해제되어 재고가 복원됩니다.</p>
+
+<div class="row">
+    <input id="orderId" type="number" min="1" placeholder="주문 ID">
+    <button id="load">주문 불러오기</button>
+</div>
+
+<div id="order" hidden>
+    <p>상태 <strong id="status"></strong> · 총액 <strong id="total"></strong> · 결제 마감 <span id="expireAt"></span></p>
+    <table>
+        <thead>
+        <tr><th>상품</th><th class="num">단가</th><th class="num">수량</th><th class="num">총 재고</th><th class="num">가용</th><th class="num">예약</th></tr>
+        </thead>
+        <tbody id="items"></tbody>
+    </table>
+    <div class="row">
+        <button id="success">결제 성공</button>
+        <button id="failure">결제 실패</button>
+    </div>
+</div>
+
+<div id="message"></div>
+
+<script>
+    const $ = (id) => document.getElementById(id);
+    const won = (value) => Number(value).toLocaleString('ko-KR') + '원';
+
+    async function request(method, url, body) {
+        const response = await fetch(url, {
+            method,
+            headers: body ? { 'Content-Type': 'application/json' } : {},
+            body: body ? JSON.stringify(body) : undefined
+        });
+        return response.json();
+    }
+
+    function showMessage(apiResponse) {
+        const message = $('message');
+        message.className = apiResponse.success ? 'ok' : 'error';
+        message.textContent = apiResponse.success
+            ? apiResponse.message
+            : `${apiResponse.code} — ${apiResponse.message}`;
+    }
+
+    function cell(text, className) {
+        const td = document.createElement('td');
+        td.textContent = text;
+        if (className) td.className = className;
+        return td;
+    }
+
+    async function loadOrder() {
+        const orderId = $('orderId').value;
+        if (!orderId) return;
+
+        const orderResponse = await request('GET', `/api/order/${orderId}`);
+        if (!orderResponse.success) {
+            $('order').hidden = true;
+            showMessage(orderResponse);
+            return;
+        }
+
+        const order = orderResponse.data;
+        $('status').textContent = order.orderStatus;
+        $('total').textContent = won(order.totalPrice);
+        $('expireAt').textContent = order.expireAt.replace('T', ' ').substring(0, 19);
+
+        // 결제 결과가 재고에 어떻게 반영되는지 보이도록 항목마다 현재 재고를 함께 보여준다
+        const rows = await Promise.all(order.items.map(async (item) => {
+            const stockResponse = await request('GET', `/api/product/${item.productId}/stock`);
+            const stock = stockResponse.success ? stockResponse.data : null;
+
+            const tr = document.createElement('tr');
+            tr.append(
+                cell(item.productName),
+                cell(won(item.unitPrice), 'num'),
+                cell(item.quantity, 'num'),
+                cell(stock ? stock.quantity : '-', 'num'),
+                cell(stock ? stock.availableQuantity : '-', 'num'),
+                cell(stock ? stock.reservedQuantity : '-', 'num')
+            );
+            return tr;
+        }));
+        $('items').replaceChildren(...rows);
+
+        const pending = order.orderStatus === 'PENDING';
+        $('success').disabled = !pending;
+        $('failure').disabled = !pending;
+        $('order').hidden = false;
+    }
+
+    async function pay(result) {
+        const response = await request('POST', `/api/payment/${$('orderId').value}/result`, { result });
+        await loadOrder();
+        showMessage(response);
+    }
+
+    $('load').addEventListener('click', () => {
+        $('message').className = '';
+        loadOrder();
+    });
+    $('success').addEventListener('click', () => pay('SUCCESS'));
+    $('failure').addEventListener('click', () => pay('FAILURE'));
+
+    const initialOrderId = new URLSearchParams(location.search).get('orderId');
+    if (initialOrderId) {
+        $('orderId').value = initialOrderId;
+        loadOrder();
+    }
+</script>
+</body>
+</html>
