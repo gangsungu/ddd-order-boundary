@@ -16,7 +16,7 @@
 | 3 | 분산 시스템 설계 (CQRS, Event-Driven, ACL, Saga) | |
 | 4 | Kafka & gRPC 실습 | |
 
-현재 진행 상황: **섹션 2 진행 중** — 주문 생성·조회·취소, 재고 예약, 목업 결제, 재고 조회와 예약 만료 스케줄러까지 구현했습니다. 헥사고날 전환이 남았습니다
+현재 진행 상황: **섹션 2 진행 중** — 주문 생성·조회·취소, 재고 예약, 목업 결제, 재고 조회와 예약 만료 스케줄러까지 구현했습니다. 지금은 헥사고날 전환을 단계별로 진행하고 있습니다 ([진행 상황](#헥사고날-전환-계획))
 
 ---
 
@@ -109,16 +109,18 @@ src/main/java/com/roykhan/dddorderboundary
     │   └── service/PaymentService.java  # 결과를 주문 확정·결제 실패 호출로 변환
     ├── stock
     │   ├── Stock.java                   # 총 재고와 가용 수량, 낙관적 락
-    │   ├── StockReservation.java        # 예약 주체·수량·만료 시각
+    │   ├── StockReservation.java        # 예약 주체(주문 ID)·수량·만료 시각
     │   ├── enums
     │   │   ├── StockStatus.java
     │   │   └── ReservationStatus.java
     │   ├── controller/StockController.java
     │   ├── dto/StockInfo.java           # 조회 응답 (총 재고·가용·예약 수량)
-    │   ├── repository/StockRepository.java
+    │   ├── repository
+    │   │   ├── StockRepository.java
+    │   │   └── StockReservationRepository.java  # 주문 ID 로 예약 조회
     │   └── service
     │       ├── StockService.java        # 재고 조회
-    │       └── StockReservationService.java
+    │       └── StockReservationService.java     # 주문 ID 단위로 예약·확정·해제·만료
     └── product
         ├── Product.java                 # 상품명, 설명, 가격
         ├── controller/ProductController.java
@@ -133,7 +135,7 @@ docs/섹션1                                # 섹션 1 미션 산출물 (설계 
 docs/섹션2-데모.http                       # 라이브 데모 시나리오
 ```
 
-아직 계층형 구조입니다. 섹션 2 안에서 헥사고날(Ports & Adapters)로 재배치할 예정이고, 주문이 상품·재고를 호출하는 지점이 출력 포트가 됩니다.
+아직 계층형 구조입니다. 섹션 2 안에서 단계별로 헥사고날(Ports & Adapters)로 옮기고 있고, 목표 구조와 순서는 [헥사고날 전환 계획](#헥사고날-전환-계획)에 정리했습니다. 주문이 상품·재고를 호출하는 지점이 출력 포트가 됩니다.
 
 재고를 `Product` 가 아닌 별도 엔티티로 둔 것은 컨텍스트를 나눈 것이 아닙니다. 재고는 상품 컨텍스트가 소유하되, 쓰기 경합과 변경 주체가 달라 애그리거트만 분리했습니다.
 
@@ -180,6 +182,18 @@ docs/섹션2-데모.http                       # 라이브 데모 시나리오
 | `EXPIRED` | 결제 마감 경과 (스케줄러) | 가용 수량 복원 | `EXPIRED` |
 
 취소와 결제 결과 반영은 `PENDING` 에서만 가능합니다. 확정된 주문의 취소는 환불이라 결제 취소가 선행되어야 하므로 섹션 3 범위입니다. 사용자 취소·결제 실패·시간 만료를 주문 상태로 구분해 남기고, 예약 해제는 `RESERVED` 상태에서만 허용해 재고가 중복 복원되지 않게 합니다. 결제 실패로 인한 해제는 재고 입장에서 사용자 취소와 다르지 않아 예약은 `CANCELLED` 로 남기고, 실패 사유는 주문 상태가 가집니다.
+
+주문과 재고 예약은 객체로 묶지 않고 **주문 ID 로만 연결**합니다. `Order` 는 예약을 들지 않고 자기 상태 전이만 책임지며, 예약(`StockReservation`)이 `orderId` 를 가집니다. 주문 서비스는 주문 상태를 먼저 바꾼 뒤, 같은 트랜잭션 안에서 그 주문 ID 의 예약을 확정·해제·만료하도록 재고 쪽에 요청합니다.
+
+```text
+OrderService.confirmOrder(orderId)
+ ├─ Order.confirm()                            주문 상태 전이 (PENDING → CONFIRMED), 불가능하면 여기서 예외
+ └─ StockReservationService.confirm(orderId)   그 주문의 예약을 모두 확정 → 총 재고 차감
+```
+
+- 주문 상태 검사에 걸리면 재고 쪽은 호출하지 않습니다. 예약 쪽에서 예외가 나면(`RESERVATION_EXPIRED` 등) 트랜잭션이 함께 되돌아가 주문 상태도 원래대로 남습니다.
+- 예약 주체는 다른 컨텍스트의 주문이라 객체 그래프로 묶어 두면 컨텍스트를 나눌 때 통째로 뜯어야 합니다. ID 로만 참조하면 지금의 서비스 호출이 헥사고날 전환에서 그대로 재고 출력 포트가 되고, 섹션 3 에서 네트워크 호출로 바꿔도 주문 도메인은 바뀌지 않습니다.
+- 재고 레코드가 있는지는 주문이 아니라 재고 쪽이 예약하면서 확인합니다. 상품은 있는데 재고가 없으면 `404 STOCK_NOT_FOUND` 가 나갑니다.
 
 재고 조회의 예약 수량은 따로 저장하지 않고 `총 재고 - 가용 수량` 으로 계산합니다. 예약은 가용 수량만, 확정은 총 재고만 줄이므로 둘의 차이가 곧 확정을 기다리는 수량입니다.
 
@@ -258,7 +272,7 @@ docs/섹션2-데모.http                       # 라이브 데모 시나리오
       예약과 복원이 실제로 일어났는지 확인할 수단이 없어 데모에 필요
 - [x] **예약 만료 스케줄러** — 미확정 예약을 배치로 해제
       결제 마감이 지난 `PENDING` 주문을 주기적으로 만료시켜 재고를 돌려준다
-- [ ] **패키지 구조를 헥사고날로 전환** — Ports & Adapters
+- [ ] **헥사고날(Ports & Adapters) 전환** — 단계마다 브랜치를 나눠 진행 ([계획](#헥사고날-전환-계획))
 
 > 주문을 먼저 만드는 이유: 주문 생성이 상품 컨텍스트를 조회해야 해서 출력 포트가 자연스럽게 필요해집니다.
 > 상품 하나만으로는 포트가 리포지토리뿐이라 포트/어댑터 분리의 효과가 드러나지 않습니다.
@@ -266,16 +280,45 @@ docs/섹션2-데모.http                       # 라이브 데모 시나리오
 > 결제를 목업으로 두는 이유: 예약을 확정하거나 해제할 주체가 필요한데 실제 PG 연동은 섹션 3 범위입니다.
 > 성공·실패만 던지는 목업이면 보상 트랜잭션 흐름은 그대로 성립하고, 나중에 출력 어댑터만 교체하면 됩니다.
 
+### 헥사고날 전환 계획
+
+한 번에 옮기지 않고 단계마다 브랜치를 나눕니다. 패키지 이동과 포트·어댑터 도입을 분리하고, 포트·어댑터는 다른 컨텍스트를 부르는 쪽이 나중에 오도록 의존 방향 순서로 들입니다.
+
+| 순서 | 브랜치 | 내용 | 상태 |
+|---|---|---|---|
+| 1 | `refactor/order-stock-reference` | 주문 ↔ 재고 예약의 JPA 연관을 `orderId` 참조로 전환 | 완료 |
+| 2 | `refactor/hexagonal-packages` | 모든 컨텍스트를 새 패키지 구조로 이동 — 동작과 호출 관계는 그대로, `BaseEntity`·에러 코드도 제자리로 | |
+| 3 | `refactor/hexagonal-product` | 상품 컨텍스트(상품·재고) — 저장소 포트와 어댑터, 상품·재고 유스케이스 | |
+| 4 | `refactor/hexagonal-order` | 주문 컨텍스트 — 상품·재고를 부르는 출력 포트와 어댑터 | |
+| 5 | `refactor/hexagonal-payment` | 결제 컨텍스트 — 주문을 부르는 출력 포트와 어댑터 | |
+
+- 연관을 먼저 끊는 이유: 끊지 않고 옮기면 상품 컨텍스트로 간 `StockReservation` 이 주문 엔티티를 import 해, 컨텍스트 경계가 코드에서부터 깨집니다.
+- 패키지 이동을 따로 떼는 이유: 이동만 하는 브랜치는 git 이 이름 변경으로 보여 줘 리뷰가 쉽고, 이후 브랜치의 diff 에는 포트·어댑터만 남습니다. 옛 구조와 새 구조가 섞이는 기간도 생기지 않습니다. 대신 2단계 직후에는 폴더만 헥사고날 모양이고, 서비스가 다른 컨텍스트를 직접 부르는 상태가 3~5단계까지 남습니다.
+
+목표 구조는 강의 예제 저장소와 같은 이름을 씁니다. 컨텍스트마다 네 계층을 두고, 도메인 모델은 JPA 엔티티를 겸합니다.
+
+| 계층 | 역할 | 예 (주문 컨텍스트) |
+|---|---|---|
+| `domain` | 모델과 규칙, 저장소 포트 | `model/Order`, `repository/OrderRepository` |
+| `application` | 유스케이스(입력 포트)와 구현, 다른 컨텍스트로 나가는 출력 포트 | `usecase/OrderUseCase`, `service/OrderApplicationService`, `port/StockPort` |
+| `infrastructure` | 출력 포트 구현 — JPA, 다른 컨텍스트 호출 | `persistence/OrderRepositoryAdapter`, `product/StockAdapter` |
+| `presentation` | 입력 어댑터 — 컨트롤러, 스케줄러 | `controller/OrderController`, `scheduler/OrderExpirationScheduler` |
+
+- 의존은 `presentation`·`infrastructure` → `application` → `domain` 한 방향으로만 향합니다.
+- 다른 컨텍스트는 그 컨텍스트의 유스케이스로만 부르고, 부르는 쪽은 자기 출력 포트를 거칩니다. 섹션 3 에서 호출 방식이 HTTP·메시지로 바뀌어도 어댑터만 교체하면 됩니다.
+- 도메인 모델과 JPA 엔티티는 분리하지 않습니다. 섹션 2 의 목적은 포트·어댑터로 경계를 드러내는 것이고, 분리가 필요해지면 어댑터 안쪽만 바뀝니다.
+
 ### 정리 대상
 
 경계와 관련된 것
 
-- [ ] `Order` ↔ `StockReservation` 양방향 JPA 연관을 `orderId` 참조로 전환
-      지금은 주문 컨텍스트와 재고 컨텍스트가 객체 그래프로 묶여 있어 섹션 3 에서 통째로 뜯어야 함
+- [x] `Order` ↔ `StockReservation` 양방향 JPA 연관을 `orderId` 참조로 전환
+      주문은 예약을 들지 않고, 예약은 주문 ID 만 가진다. 확정·해제는 주문 서비스가 주문 ID 로 요청한다
 - [ ] 만료 시각의 정본을 하나로 — `Order.expireAt` 과 `StockReservation.expireAt` 이 이중 관리됨
       스케줄러는 주문의 마감을, 결제 확정은 예약의 마감을 본다. 지금은 생성 시 같은 값을 넣어 어긋나지 않을 뿐이다
 - [ ] `Product` 엔티티의 클래스 레벨 `@Setter` 제거 — 도메인 모델을 분리할 때 가장 먼저 걸리는 지점
 - [ ] 도메인별 에러 코드를 각 도메인 패키지로 이동 (`ProductErrorCode` / `OrderErrorCode` / `StockErrorCode` / `ReservationErrorCode`)
+      헥사고날 전환 2단계(패키지 구조 전환)에서 함께 옮긴다
 
 동작과 관련된 것
 

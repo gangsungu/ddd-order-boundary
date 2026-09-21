@@ -3,7 +3,6 @@ package com.roykhan.dddorderboundary.domain.order;
 import com.roykhan.dddorderboundary.common.exception.OrderErrorCode;
 import com.roykhan.dddorderboundary.domain.base.BaseEntity;
 import com.roykhan.dddorderboundary.domain.order.enums.OrderStatus;
-import com.roykhan.dddorderboundary.domain.stock.StockReservation;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -31,9 +30,6 @@ public class Order extends BaseEntity {
 
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<OrderItem> items = new ArrayList<>();
-
-    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL)
-    private List<StockReservation> reservations = new ArrayList<>();
 
     @Column(nullable = false)
     private BigDecimal totalPrice;
@@ -68,53 +64,41 @@ public class Order extends BaseEntity {
         this.totalPrice = this.totalPrice.add(orderItem.amount());
     }
 
-    public void addReservation(StockReservation reservation) {
-        this.reservations.add(reservation);
-    }
-
     // 밖에서 항목을 넣으면 총액과 어긋나므로 읽기 전용으로 내보낸다
     public List<OrderItem> getItems() {
         return Collections.unmodifiableList(this.items);
     }
 
+    // 주문의 상태 전이만 책임진다. 재고 예약은 재고 컨텍스트가 소유하므로
+    // 주문은 예약 객체를 들지 않고, 확정·해제는 서비스가 주문 ID 로 요청한다
+
     // 주문 취소
-    // 점유한 재고 반환
     public void cancel() {
         checkPending();
         this.orderStatus = OrderStatus.CANCELLED;
         this.cancelledAt = LocalDateTime.now();
-
-        reservations.forEach(StockReservation::cancelByUser);
     }
 
     // 결제 성공 - 주문 확정
-    // 예약을 확정해 총 재고를 차감한다
     public void confirm() {
         checkPending();
         this.orderStatus = OrderStatus.CONFIRMED;
         this.confirmedAt = LocalDateTime.now();
-
-        reservations.forEach(StockReservation::confirm);
     }
 
-    // 결제 실패 - 보상 트랜잭션
-    // 점유한 재고 반환
+    // 결제 실패 - 보상 트랜잭션의 시작점
     public void failPayment() {
         checkPending();
         this.orderStatus = OrderStatus.PAYMENT_FAILED;
         this.cancelledAt = LocalDateTime.now();
-
-        reservations.forEach(StockReservation::cancelByPaymentFailure);
     }
 
     // 주문 만료 - 결제 마감까지 결제되지 않은 주문
-    // 점유한 재고 반환. 마감 시각(expireAt)은 그대로 두고 풀린 시각만 남긴다
+    // 마감 시각(expireAt)은 그대로 두고 풀린 시각만 남긴다
     public void expire() {
         checkPending();
         this.orderStatus = OrderStatus.EXPIRED;
         this.cancelledAt = LocalDateTime.now();
-
-        reservations.forEach(StockReservation::cancelByExpiration);
     }
 
     // 취소·결제 결과 반영·만료는 결제 대기 중인 주문에서만 가능하다.
