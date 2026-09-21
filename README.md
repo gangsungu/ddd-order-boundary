@@ -16,7 +16,7 @@
 | 3 | 분산 시스템 설계 (CQRS, Event-Driven, ACL, Saga) | |
 | 4 | Kafka & gRPC 실습 | |
 
-현재 진행 상황: **섹션 2 진행 중** — 주문 생성·조회·취소와 재고 예약까지 구현했습니다. 목업 결제와 헥사고날 전환이 남았습니다
+현재 진행 상황: **섹션 2 진행 중** — 주문 생성·조회·취소, 재고 예약과 재고 조회까지 구현했습니다. 목업 결제와 헥사고날 전환이 남았습니다
 
 ---
 
@@ -54,7 +54,7 @@ PostgreSQL 로 띄우려면 프로필을 전환합니다. 접속 정보는 `.env
 
 H2 는 `MODE=PostgreSQL` 호환 모드로 동작합니다. 3주차 분산 시스템 단계에서 실제 PostgreSQL 이 필요해지면 프로필만 바꾸면 됩니다.
 
-API 를 순서대로 찔러볼 수 있는 시나리오는 [`docs/섹션2-데모.http`](docs/섹션2-데모.http) 에 있습니다. IntelliJ HTTP Client 로 위에서부터 실행하면 상품 등록 → 주문 → 재고 예약 → 취소·복원 흐름을 그대로 따라갈 수 있습니다. 결제와 재고 조회 구간은 아직 구현 전이라 동작하지 않습니다.
+API 를 순서대로 찔러볼 수 있는 시나리오는 [`docs/섹션2-데모.http`](docs/섹션2-데모.http) 에 있습니다. IntelliJ HTTP Client 로 위에서부터 실행하면 상품 등록 → 주문 → 재고 예약 → 취소·복원 흐름을 그대로 따라갈 수 있습니다. 결제 구간은 아직 구현 전이라 동작하지 않습니다.
 
 ---
 
@@ -98,8 +98,12 @@ src/main/java/com/roykhan/dddorderboundary
     │   ├── enums
     │   │   ├── StockStatus.java
     │   │   └── ReservationStatus.java
+    │   ├── controller/StockController.java
+    │   ├── dto/StockInfo.java           # 조회 응답 (총 재고·가용·예약 수량)
     │   ├── repository/StockRepository.java
-    │   └── service/StockReservationService.java
+    │   └── service
+    │       ├── StockService.java        # 재고 조회
+    │       └── StockReservationService.java
     └── product
         ├── Product.java                 # 상품명, 설명, 가격
         ├── controller/ProductController.java
@@ -137,6 +141,7 @@ docs/섹션2-데모.http                       # 라이브 데모 시나리오
 | `POST` | `/api/product` | 상품 등록 (이름 중복 불가, 초기 재고를 함께 생성) |
 | `PUT` | `/api/product/{id}` | 상품 수정 |
 | `DELETE` | `/api/product/{id}` | 상품 삭제 |
+| `GET` | `/api/product/{productId}/stock` | 재고 조회 — 총 재고·가용·예약 수량과 재고 상태 |
 | `GET` | `/api/health` | 헬스 체크 |
 
 ### 주문과 재고 예약
@@ -151,6 +156,8 @@ docs/섹션2-데모.http                       # 라이브 데모 시나리오
 | `EXPIRED` | 예약 만료 *(배치 미구현)* | 가용 수량 복원 | `EXPIRED` |
 
 취소는 `PENDING` 에서만 가능합니다. 확정된 주문의 취소는 환불이라 결제 취소가 선행되어야 하므로 섹션 3 범위입니다. 사용자 취소와 시간 만료를 상태로 구분해 남기고, 예약 해제는 `RESERVED` 상태에서만 허용해 재고가 중복 복원되지 않게 합니다.
+
+재고 조회의 예약 수량은 따로 저장하지 않고 `총 재고 - 가용 수량` 으로 계산합니다. 예약은 가용 수량만, 확정은 총 재고만 줄이므로 둘의 차이가 곧 확정을 기다리는 수량입니다.
 
 주문 항목(`OrderItem`)은 주문 시점의 상품명과 단가를 복사해 둡니다. 이후 상품 가격이 바뀌어도 이미 끝난 주문의 금액은 달라지지 않고, 조회할 때 상품을 다시 읽지 않습니다. 설계 문서의 **"시점이 중요한 값은 복사한다"** 원칙을 구현한 부분입니다.
 
@@ -213,7 +220,7 @@ docs/섹션2-데모.http                       # 라이브 데모 시나리오
       주문 생성이 가용 수량을 예약으로 옮기고, 취소하면 되돌린다
 - [ ] **목업 결제** — 성공·실패 두 가지만 던지는 목업 페이지
       성공은 예약 확정, 실패는 재고 복원 (보상 트랜잭션)
-- [ ] **재고 조회 API** — `GET /api/product/{productId}/stock`
+- [x] **재고 조회 API** — `GET /api/product/{productId}/stock`
       예약과 복원이 실제로 일어났는지 확인할 수단이 없어 데모에 필요
 - [ ] **예약 만료 스케줄러** — 미확정 예약을 배치로 해제
       `expireAt` 과 `isExpired()` 는 있고 배치만 없음

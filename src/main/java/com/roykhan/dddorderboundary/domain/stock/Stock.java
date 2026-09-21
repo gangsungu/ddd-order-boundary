@@ -65,6 +65,12 @@ public class Stock extends BaseEntity {
         updateStatus();
     }
 
+    // 예약 수량 - 가용 수량으로 넘어가지 않고 확정을 기다리는 수량
+    // 예약은 가용 수량만 줄이고 확정이 총 재고를 줄이므로 둘의 차이가 곧 예약 중인 수량이다
+    public int reservedQuantity() {
+        return this.quantity - this.availableQuantity;
+    }
+
     // 재고상태 자동 업데이트
     private void updateStatus() {
         if(this.availableQuantity > 0) {
