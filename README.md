@@ -71,73 +71,84 @@ API 를 순서대로 찔러볼 수 있는 시나리오는 [`docs/섹션2-데모.
 ```
 src/main/java/com/roykhan/dddorderboundary
 ├── DddOrderBoundaryApplication.java
-├── common
+├── common                               # 컨텍스트가 함께 쓰는 기반
 │   ├── config
 │   │   ├── JacksonConfig.java           # ApiResponse 전용 직렬화 모듈 등록
 │   │   ├── JpaAuditingConfig.java
 │   │   └── SchedulingConfig.java        # @EnableScheduling (슬라이스 테스트에서 빠지도록 분리)
 │   ├── controller
 │   │   └── HealthController.java
+│   ├── domain
+│   │   └── BaseEntity.java              # 공통 식별자 + 생성/수정 시각 감사(Auditing)
 │   ├── exception
 │   │   ├── BaseErrorCode.java           # 에러 코드 계약 (상태/메시지/예외 생성)
 │   │   ├── BusinessException.java       # 에러 코드를 실어 나르는 도메인 예외
 │   │   ├── CommonErrorCode.java         # 공통 4xx/5xx 코드
-│   │   ├── ProductErrorCode.java        # 상품 도메인 코드
 │   │   └── GlobalExceptionHandler.java  # 예외 → ApiResponse 변환
 │   └── response
 │       ├── ApiResponse.java             # 모든 응답의 공통 규격
 │       └── ApiResponseSerializer.java   # 성공 시 data 생략, 실패 시 유지
-└── domain
-    ├── base
-    │   └── BaseEntity.java              # 공통 식별자 + 생성/수정 시각 감사(Auditing)
-    ├── order
-    │   ├── Order.java                   # 주문 애그리거트 루트 — 상태 전이와 총액 계산
-    │   ├── OrderItem.java               # 주문 시점 상품명·단가 스냅샷
-    │   ├── enums/OrderStatus.java
-    │   ├── controller/OrderController.java
-    │   ├── dto
-    │   │   ├── CreateOrderRequest.java  # 생성 요청 (중첩 OrderLine)
-    │   │   ├── OrderCreateInfo.java     # 생성 응답 (주문 ID)
-    │   │   └── OrderInfo.java           # 조회 응답 (항목 내역 포함)
-    │   ├── repository/OrderRepository.java
-    │   ├── scheduler/OrderExpirationScheduler.java  # 결제 마감이 지난 주문 만료
-    │   └── service/OrderService.java
-    ├── payment                          # 목업 결제 — 상태 없이 결과만 주문에 전달
-    │   ├── enums/PaymentResult.java     # SUCCESS / FAILURE
-    │   ├── controller/PaymentController.java
-    │   ├── dto/PaymentResultRequest.java
-    │   └── service/PaymentService.java  # 결과를 주문 확정·결제 실패 호출로 변환
-    ├── stock
-    │   ├── Stock.java                   # 총 재고와 가용 수량, 낙관적 락
-    │   ├── StockReservation.java        # 예약 주체(주문 ID)·수량·만료 시각
-    │   ├── enums
-    │   │   ├── StockStatus.java
-    │   │   └── ReservationStatus.java
-    │   ├── controller/StockController.java
-    │   ├── dto/StockInfo.java           # 조회 응답 (총 재고·가용·예약 수량)
-    │   ├── repository
-    │   │   ├── StockRepository.java
-    │   │   └── StockReservationRepository.java  # 주문 ID 로 예약 조회
-    │   └── service
-    │       ├── StockService.java        # 재고 조회
-    │       └── StockReservationService.java     # 주문 ID 단위로 예약·확정·해제·만료
-    └── product
-        ├── Product.java                 # 상품명, 설명, 가격
-        ├── controller/ProductController.java
-        ├── dto
-        │   ├── ProductInfo.java         # 응답용
-        │   └── ProductRegisterRequest.java  # 등록/수정 요청용 (초기 재고 수량 포함)
-        ├── repository/ProductRepository.java
-        └── service/ProductService.java
+├── order                                # 주문 컨텍스트
+│   ├── domain
+│   │   ├── model
+│   │   │   ├── Order.java               # 주문 애그리거트 루트 — 상태 전이와 총액 계산
+│   │   │   ├── OrderItem.java           # 주문 시점 상품명·단가 스냅샷
+│   │   │   └── OrderStatus.java
+│   │   ├── repository/OrderRepository.java
+│   │   └── exception/OrderErrorCode.java
+│   ├── application
+│   │   ├── service/OrderService.java
+│   │   └── dto/OrderInfo.java           # 조회 응답 (항목 내역 포함)
+│   └── presentation
+│       ├── controller/OrderController.java
+│       ├── scheduler/OrderExpirationScheduler.java  # 결제 마감이 지난 주문 만료
+│       └── dto
+│           ├── CreateOrderRequest.java  # 생성 요청 (중첩 OrderLine)
+│           └── OrderCreateInfo.java     # 생성 응답 (주문 ID)
+├── product                              # 상품 컨텍스트 — 상품과 재고
+│   ├── domain
+│   │   ├── model
+│   │   │   ├── Product.java             # 상품명, 설명, 가격
+│   │   │   ├── Stock.java               # 총 재고와 가용 수량, 낙관적 락
+│   │   │   ├── StockReservation.java    # 예약 주체(주문 ID)·수량·만료 시각
+│   │   │   ├── StockStatus.java
+│   │   │   └── ReservationStatus.java
+│   │   ├── repository
+│   │   │   ├── ProductRepository.java
+│   │   │   ├── StockRepository.java
+│   │   │   └── StockReservationRepository.java  # 주문 ID 로 예약 조회
+│   │   └── exception
+│   │       ├── ProductErrorCode.java
+│   │       ├── StockErrorCode.java
+│   │       └── ReservationErrorCode.java
+│   ├── application
+│   │   ├── service
+│   │   │   ├── ProductService.java
+│   │   │   ├── StockService.java        # 재고 조회
+│   │   │   └── StockReservationService.java     # 주문 ID 단위로 예약·확정·해제·만료
+│   │   └── dto
+│   │       ├── ProductInfo.java         # 상품 조회 응답
+│   │       └── StockInfo.java           # 재고 조회 응답 (총 재고·가용·예약 수량)
+│   └── presentation
+│       ├── controller
+│       │   ├── ProductController.java
+│       │   └── StockController.java
+│       └── dto/ProductRegisterRequest.java  # 등록/수정 요청 (초기 재고 수량 포함)
+└── payment                              # 결제 컨텍스트 (목업) — 상태 없이 결과만 주문에 전달
+    ├── domain/model/PaymentResult.java  # SUCCESS / FAILURE
+    ├── application/service/PaymentService.java  # 결과를 주문 확정·결제 실패 호출로 변환
+    └── presentation
+        ├── controller/PaymentController.java
+        └── dto/PaymentResultRequest.java
 
 src/main/resources/static/payment.html    # 목업 결제 페이지
 docs/섹션1                                # 섹션 1 미션 산출물 (설계 문서)
 docs/섹션2-데모.http                       # 라이브 데모 시나리오
 ```
 
-아직 계층형 구조입니다. 섹션 2 안에서 단계별로 헥사고날(Ports & Adapters)로 옮기고 있고, 목표 구조와 순서는 [헥사고날 전환 계획](#헥사고날-전환-계획)에 정리했습니다. 주문이 상품·재고를 호출하는 지점이 출력 포트가 됩니다.
+컨텍스트마다 `domain / application / presentation` 으로 나눈 상태입니다. 아직 포트·어댑터가 없어 헥사고날의 모양만 갖춘 단계이고, `infrastructure` 계층은 포트·어댑터를 들이는 3~5단계에서 생깁니다. 목표 구조와 순서, 지금 남아 있는 의존은 [헥사고날 전환 계획](#헥사고날-전환-계획)에 정리했습니다.
 
-재고를 `Product` 가 아닌 별도 엔티티로 둔 것은 컨텍스트를 나눈 것이 아닙니다. 재고는 상품 컨텍스트가 소유하되, 쓰기 경합과 변경 주체가 달라 애그리거트만 분리했습니다.
+재고를 `Product` 가 아닌 별도 엔티티로 둔 것은 컨텍스트를 나눈 것이 아닙니다. 재고는 상품 컨텍스트가 소유하되, 쓰기 경합과 변경 주체가 달라 애그리거트만 분리했습니다. 그래서 패키지도 따로 두지 않고 `product` 컨텍스트 안에 함께 둡니다.
 
 ---
 
@@ -287,7 +298,7 @@ OrderService.confirmOrder(orderId)
 | 순서 | 브랜치 | 내용 | 상태 |
 |---|---|---|---|
 | 1 | `refactor/order-stock-reference` | 주문 ↔ 재고 예약의 JPA 연관을 `orderId` 참조로 전환 | 완료 |
-| 2 | `refactor/hexagonal-packages` | 모든 컨텍스트를 새 패키지 구조로 이동 — 동작과 호출 관계는 그대로, `BaseEntity`·에러 코드도 제자리로 | |
+| 2 | `refactor/hexagonal-packages` | 모든 컨텍스트를 새 패키지 구조로 이동 — 동작과 호출 관계는 그대로, `BaseEntity`·에러 코드도 제자리로 | 완료 |
 | 3 | `refactor/hexagonal-product` | 상품 컨텍스트(상품·재고) — 저장소 포트와 어댑터, 상품·재고 유스케이스 | |
 | 4 | `refactor/hexagonal-order` | 주문 컨텍스트 — 상품·재고를 부르는 출력 포트와 어댑터 | |
 | 5 | `refactor/hexagonal-payment` | 결제 컨텍스트 — 주문을 부르는 출력 포트와 어댑터 | |
@@ -308,6 +319,20 @@ OrderService.confirmOrder(orderId)
 - 다른 컨텍스트는 그 컨텍스트의 유스케이스로만 부르고, 부르는 쪽은 자기 출력 포트를 거칩니다. 섹션 3 에서 호출 방식이 HTTP·메시지로 바뀌어도 어댑터만 교체하면 됩니다.
 - 도메인 모델과 JPA 엔티티는 분리하지 않습니다. 섹션 2 의 목적은 포트·어댑터로 경계를 드러내는 것이고, 분리가 필요해지면 어댑터 안쪽만 바뀝니다.
 
+2단계(패키지 이동)는 파일 위치와 `package`·`import` 만 바꿨습니다. 클래스 이름과 호출 관계는 그대로라, 아래 의존이 남아 있고 3~5단계에서 하나씩 없앱니다.
+
+| 위치 | 지금 남은 의존 | 없애는 단계 |
+|---|---|---|
+| `*/domain/repository` | Spring Data `JpaRepository` 를 그대로 상속해 도메인이 JPA 에 의존 | 컨텍스트마다 포트(일반 인터페이스)와 `infrastructure/persistence` 어댑터로 분리 |
+| `ProductService.register`·`update` | 요청 DTO(`presentation/dto/ProductRegisterRequest`)를 받아 application → presentation 역방향 | 3 상품 — 커맨드 도입 |
+| `OrderService.createOrder` | 요청 DTO(`presentation/dto/CreateOrderRequest`)를 받아 application → presentation 역방향 | 4 주문 — 커맨드 도입 |
+| `OrderService` | 상품 컨텍스트의 `ProductRepository`·`StockReservationService` 를 직접 호출 | 4 주문 — 상품·재고 출력 포트와 어댑터 |
+| `PaymentService` | 주문 컨텍스트의 `OrderService` 를 직접 호출 | 5 결제 — 주문 출력 포트와 어댑터 |
+
+- 저장소 인터페이스는 처음부터 나중에 포트가 될 자리(`domain/repository`)에 두었습니다. 포트와 어댑터로 쪼개도 서비스 코드는 그대로입니다.
+- 서비스 이름도 그대로 두었습니다. 유스케이스 인터페이스(입력 포트)를 들이는 단계에서 `*ApplicationService` 로 바꿉니다.
+- enum 은 따로 `enums` 패키지를 두지 않고 모델과 함께 `domain/model` 에 둡니다.
+
 ### 정리 대상
 
 경계와 관련된 것
@@ -317,8 +342,8 @@ OrderService.confirmOrder(orderId)
 - [ ] 만료 시각의 정본을 하나로 — `Order.expireAt` 과 `StockReservation.expireAt` 이 이중 관리됨
       스케줄러는 주문의 마감을, 결제 확정은 예약의 마감을 본다. 지금은 생성 시 같은 값을 넣어 어긋나지 않을 뿐이다
 - [ ] `Product` 엔티티의 클래스 레벨 `@Setter` 제거 — 도메인 모델을 분리할 때 가장 먼저 걸리는 지점
-- [ ] 도메인별 에러 코드를 각 도메인 패키지로 이동 (`ProductErrorCode` / `OrderErrorCode` / `StockErrorCode` / `ReservationErrorCode`)
-      헥사고날 전환 2단계(패키지 구조 전환)에서 함께 옮긴다
+- [x] 도메인별 에러 코드를 각 도메인 패키지로 이동 (`ProductErrorCode` / `OrderErrorCode` / `StockErrorCode` / `ReservationErrorCode`)
+      `order/domain/exception`, `product/domain/exception` 으로 옮겼다. 공통 계약(`BaseErrorCode`)과 공통 코드만 `common/exception` 에 남는다
 
 동작과 관련된 것
 
