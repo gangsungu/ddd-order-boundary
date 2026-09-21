@@ -1,13 +1,13 @@
 package com.roykhan.dddorderboundary.product.application.service;
 
-import com.roykhan.dddorderboundary.product.application.dto.ReserveStockCommand;
-import com.roykhan.dddorderboundary.product.application.dto.StockInfo;
-import com.roykhan.dddorderboundary.product.application.usecase.StockUseCase;
+import com.roykhan.dddorderboundary.product.application.port.in.ReserveStockCommand;
+import com.roykhan.dddorderboundary.product.application.port.in.StockInfo;
+import com.roykhan.dddorderboundary.product.application.port.in.StockUseCase;
+import com.roykhan.dddorderboundary.product.application.port.out.StockRepository;
+import com.roykhan.dddorderboundary.product.application.port.out.StockReservationRepository;
 import com.roykhan.dddorderboundary.product.domain.exception.StockErrorCode;
 import com.roykhan.dddorderboundary.product.domain.model.Stock;
 import com.roykhan.dddorderboundary.product.domain.model.StockReservation;
-import com.roykhan.dddorderboundary.product.domain.repository.StockRepository;
-import com.roykhan.dddorderboundary.product.domain.repository.StockReservationRepository;
 import java.util.List;
 import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;

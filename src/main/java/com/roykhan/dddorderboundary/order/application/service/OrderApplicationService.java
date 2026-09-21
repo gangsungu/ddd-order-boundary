@@ -1,16 +1,16 @@
 package com.roykhan.dddorderboundary.order.application.service;
 
-import com.roykhan.dddorderboundary.order.application.dto.CreateOrderCommand;
-import com.roykhan.dddorderboundary.order.application.dto.OrderInfo;
-import com.roykhan.dddorderboundary.order.application.port.ProductPort;
-import com.roykhan.dddorderboundary.order.application.port.ProductSnapshot;
-import com.roykhan.dddorderboundary.order.application.port.StockLine;
-import com.roykhan.dddorderboundary.order.application.port.StockPort;
-import com.roykhan.dddorderboundary.order.application.usecase.OrderUseCase;
+import com.roykhan.dddorderboundary.order.application.port.in.CreateOrderCommand;
+import com.roykhan.dddorderboundary.order.application.port.in.OrderInfo;
+import com.roykhan.dddorderboundary.order.application.port.in.OrderUseCase;
+import com.roykhan.dddorderboundary.order.application.port.out.OrderRepository;
+import com.roykhan.dddorderboundary.order.application.port.out.ProductPort;
+import com.roykhan.dddorderboundary.order.application.port.out.ProductSnapshot;
+import com.roykhan.dddorderboundary.order.application.port.out.StockLine;
+import com.roykhan.dddorderboundary.order.application.port.out.StockPort;
 import com.roykhan.dddorderboundary.order.domain.exception.OrderErrorCode;
 import com.roykhan.dddorderboundary.order.domain.model.Order;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
-import com.roykhan.dddorderboundary.order.domain.repository.OrderRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;

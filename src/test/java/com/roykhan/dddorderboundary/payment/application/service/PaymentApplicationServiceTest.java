@@ -4,7 +4,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-import com.roykhan.dddorderboundary.payment.application.port.OrderPort;
+import com.roykhan.dddorderboundary.payment.application.port.out.OrderPort;
 import com.roykhan.dddorderboundary.payment.domain.model.PaymentResult;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
