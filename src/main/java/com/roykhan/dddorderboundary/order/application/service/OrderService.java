@@ -6,9 +6,10 @@ import com.roykhan.dddorderboundary.order.domain.model.Order;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
 import com.roykhan.dddorderboundary.order.domain.repository.OrderRepository;
 import com.roykhan.dddorderboundary.order.presentation.dto.CreateOrderRequest;
-import com.roykhan.dddorderboundary.product.application.service.StockReservationService;
-import com.roykhan.dddorderboundary.product.domain.model.Product;
-import com.roykhan.dddorderboundary.product.domain.repository.ProductRepository;
+import com.roykhan.dddorderboundary.product.application.dto.ProductInfo;
+import com.roykhan.dddorderboundary.product.application.dto.ReserveStockCommand;
+import com.roykhan.dddorderboundary.product.application.usecase.ProductUseCase;
+import com.roykhan.dddorderboundary.product.application.usecase.StockUseCase;
 import jakarta.validation.Valid;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -25,10 +26,11 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class OrderService {
 
-    private final ProductRepository productRepository;
     private final OrderRepository orderRepository;
 
-    private final StockReservationService stockReservationService;
+    // 상품 컨텍스트는 유스케이스(입력 포트)로만 부른다. 4단계에서 주문 쪽 출력 포트 뒤로 옮긴다
+    private final ProductUseCase productUseCase;
+    private final StockUseCase stockUseCase;
 
     @Value("${order.reservation.expire-time:10}")
     private int expireTime;
@@ -40,8 +42,8 @@ public class OrderService {
             .distinct()
             .toList();
 
-        Map<Long, Product> products = productRepository.findAllById(productIds).stream()
-            .collect(Collectors.toMap(Product::getId, Function.identity()));
+        Map<Long, ProductInfo> products = productUseCase.findAllByIds(productIds).stream()
+            .collect(Collectors.toMap(ProductInfo::id, Function.identity()));
 
         if(products.size() != productIds.size()) {
             throw OrderErrorCode.INVALID_ORDER_ITEM.exception();
@@ -52,16 +54,17 @@ public class OrderService {
         Order order = Order.create(request.memberId(), expireAt);
 
         for(CreateOrderRequest.OrderLine line : request.items()) {
-            Product product = products.get(line.productId());
-            order.addItem(product.getId(), product.getName(), product.getPrice(), line.quantity());
+            ProductInfo product = products.get(line.productId());
+            order.addItem(product.id(), product.name(), product.price(), line.quantity());
         }
 
         orderRepository.save(order);
 
         // 재고 예약 - 예약은 주문 ID 로 묶이므로 주문을 먼저 저장해 ID 를 받는다
-        for(CreateOrderRequest.OrderLine line : request.items()) {
-            stockReservationService.reserve(order.getId(), line.productId(), line.quantity(), expireAt);
-        }
+        List<ReserveStockCommand.Line> lines = request.items().stream()
+            .map(line -> new ReserveStockCommand.Line(line.productId(), line.quantity()))
+            .toList();
+        stockUseCase.reserve(new ReserveStockCommand(order.getId(), lines, expireAt));
 
         return order.getId();
     }
@@ -78,7 +81,7 @@ public class OrderService {
 
         // 취소 가능한 상태인지는 Order 가 판단한다
         order.cancel();
-        stockReservationService.cancel(orderId);
+        stockUseCase.cancelReservations(orderId);
 
         // 연관된 PENDING 상태 결제도 취소 처리
         // 추후 작업 부분
@@ -88,14 +91,14 @@ public class OrderService {
     @Transactional
     public void confirmOrder(long orderId) {
         getOrder(orderId).confirm();
-        stockReservationService.confirm(orderId);
+        stockUseCase.confirmReservations(orderId);
     }
 
     // 결제 실패 - 예약을 해제해 재고를 복원한다
     @Transactional
     public void failPayment(long orderId) {
         getOrder(orderId).failPayment();
-        stockReservationService.cancel(orderId);
+        stockUseCase.cancelReservations(orderId);
     }
 
     // 결제 마감이 지난 PENDING 주문 ID
@@ -109,7 +112,7 @@ public class OrderService {
     @Transactional
     public void expireOrder(long orderId) {
         getOrder(orderId).expire();
-        stockReservationService.expire(orderId);
+        stockUseCase.expireReservations(orderId);
     }
 
     private Order getOrder(long orderId) {

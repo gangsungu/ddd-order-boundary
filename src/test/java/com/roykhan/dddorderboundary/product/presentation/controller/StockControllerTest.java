@@ -7,7 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.roykhan.dddorderboundary.common.config.JacksonConfig;
 import com.roykhan.dddorderboundary.product.application.dto.StockInfo;
-import com.roykhan.dddorderboundary.product.application.service.StockService;
+import com.roykhan.dddorderboundary.product.application.usecase.StockUseCase;
 import com.roykhan.dddorderboundary.product.domain.exception.StockErrorCode;
 import com.roykhan.dddorderboundary.product.domain.model.StockStatus;
 import org.junit.jupiter.api.DisplayName;
@@ -27,12 +27,12 @@ class StockControllerTest {
     private MockMvc mockMvc;
 
     @MockitoBean
-    private StockService stockService;
+    private StockUseCase stockUseCase;
 
     @Test
     @DisplayName("GET /api/product/{productId}/stock - 총 재고·가용·예약 수량을 data 에 담아 반환한다")
     void 재고_조회() throws Exception {
-        given(stockService.findByProductId(1L))
+        given(stockUseCase.findByProductId(1L))
             .willReturn(new StockInfo(1L, 10, 8, 2, StockStatus.IN_STOCK));
 
         mockMvc.perform(get("/api/product/{productId}/stock", 1L))
@@ -49,7 +49,7 @@ class StockControllerTest {
     @Test
     @DisplayName("GET /api/product/{productId}/stock - 재고가 없으면 404 STOCK_NOT_FOUND 로 실패한다")
     void 재고_없음() throws Exception {
-        given(stockService.findByProductId(99L)).willThrow(StockErrorCode.STOCK_NOT_FOUND.exception());
+        given(stockUseCase.findByProductId(99L)).willThrow(StockErrorCode.STOCK_NOT_FOUND.exception());
 
         mockMvc.perform(get("/api/product/{productId}/stock", 99L))
             .andExpect(status().isNotFound())

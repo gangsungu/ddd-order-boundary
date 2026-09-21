@@ -3,8 +3,6 @@ package com.roykhan.dddorderboundary.order.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -19,11 +17,12 @@ import com.roykhan.dddorderboundary.order.domain.model.OrderItem;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
 import com.roykhan.dddorderboundary.order.domain.repository.OrderRepository;
 import com.roykhan.dddorderboundary.order.presentation.dto.CreateOrderRequest;
-import com.roykhan.dddorderboundary.product.application.service.StockReservationService;
+import com.roykhan.dddorderboundary.product.application.dto.ProductInfo;
+import com.roykhan.dddorderboundary.product.application.dto.ReserveStockCommand;
+import com.roykhan.dddorderboundary.product.application.usecase.ProductUseCase;
+import com.roykhan.dddorderboundary.product.application.usecase.StockUseCase;
 import com.roykhan.dddorderboundary.product.domain.exception.ReservationErrorCode;
 import com.roykhan.dddorderboundary.product.domain.exception.StockErrorCode;
-import com.roykhan.dddorderboundary.product.domain.model.Product;
-import com.roykhan.dddorderboundary.product.domain.repository.ProductRepository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -41,7 +40,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
-// 재고 수량의 변화는 StockReservationServiceTest 가 확인한다.
+// 재고 수량의 변화는 StockApplicationServiceTest 가 확인한다.
 // 여기서는 주문 상태 전이와, 그 결과로 어떤 주문 ID 의 예약을 확정·해제하도록 요청하는지만 본다
 @ExtendWith(MockitoExtension.class)
 @DisplayName("OrderService 단위 테스트")
@@ -50,13 +49,13 @@ class OrderServiceTest {
     private static final int EXPIRE_MINUTES = 10;
 
     @Mock
-    private ProductRepository productRepository;
+    private ProductUseCase productUseCase;
 
     @Mock
     private OrderRepository orderRepository;
 
     @Mock
-    private StockReservationService stockReservationService;
+    private StockUseCase stockUseCase;
 
     @InjectMocks
     private OrderService orderService;
@@ -65,21 +64,16 @@ class OrderServiceTest {
     private ArgumentCaptor<Order> orderCaptor;
 
     @Captor
-    private ArgumentCaptor<LocalDateTime> expireAtCaptor;
+    private ArgumentCaptor<ReserveStockCommand> reserveCaptor;
 
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(orderService, "expireTime", EXPIRE_MINUTES);
     }
 
-    private static Product product(Long id, String name, String price) {
-        Product product = Product.builder()
-            .name(name)
-            .description("설명")
-            .price(new BigDecimal(price))
-            .build();
-        ReflectionTestUtils.setField(product, "id", id);
-        return product;
+    // 상품 컨텍스트가 유스케이스로 돌려주는 조회 결과
+    private static ProductInfo product(Long id, String name, String price) {
+        return new ProductInfo(id, name, "설명", new BigDecimal(price));
     }
 
     private static CreateOrderRequest request(Long memberId, CreateOrderRequest.OrderLine... lines) {
@@ -123,7 +117,7 @@ class OrderServiceTest {
         @Test
         @DisplayName("주문을 PENDING 으로 저장하고 부여된 주문 ID 를 반환한다")
         void 주문_생성_성공() {
-            given(productRepository.findAllById(List.of(1L))).willReturn(List.of(product(1L, "위스키", "1000")));
+            given(productUseCase.findAllByIds(List.of(1L))).willReturn(List.of(product(1L, "위스키", "1000")));
             givenOrderSaveAssignsId(42L);
 
             long orderId = orderService.createOrder(request(7L, line(1L, 2)));
@@ -141,8 +135,7 @@ class OrderServiceTest {
         @Test
         @DisplayName("주문 시점의 상품명과 단가를 항목에 복사한다")
         void 주문_시점_스냅샷() {
-            Product whisky = product(1L, "글렌피딕 12년", "89000.00");
-            given(productRepository.findAllById(List.of(1L))).willReturn(List.of(whisky));
+            given(productUseCase.findAllByIds(List.of(1L))).willReturn(List.of(product(1L, "글렌피딕 12년", "89000.00")));
             givenOrderSaveAssignsId(1L);
 
             orderService.createOrder(request(1L, line(1L, 3)));
@@ -160,26 +153,9 @@ class OrderServiceTest {
         }
 
         @Test
-        @DisplayName("주문 후 상품 가격이 바뀌어도 항목에 복사된 단가는 그대로다")
-        void 상품_가격_변경과_무관() {
-            Product whisky = product(1L, "글렌피딕 12년", "89000.00");
-            given(productRepository.findAllById(List.of(1L))).willReturn(List.of(whisky));
-            givenOrderSaveAssignsId(1L);
-
-            orderService.createOrder(request(1L, line(1L, 2)));
-
-            whisky.update(whisky.getName(), whisky.getDescription(), new BigDecimal("50000.00"));
-
-            verify(orderRepository).save(orderCaptor.capture());
-            Order saved = orderCaptor.getValue();
-            assertThat(saved.getItems().getFirst().getUnitPrice()).isEqualByComparingTo("89000.00");
-            assertThat(saved.getTotalPrice()).isEqualByComparingTo("178000.00");
-        }
-
-        @Test
         @DisplayName("총 주문 금액을 항목 금액의 합으로 계산한다")
         void 총액_계산() {
-            given(productRepository.findAllById(List.of(1L, 2L)))
+            given(productUseCase.findAllByIds(List.of(1L, 2L)))
                 .willReturn(List.of(product(1L, "상품1", "1000"), product(2L, "상품2", "250.50")));
             givenOrderSaveAssignsId(1L);
 
@@ -191,25 +167,29 @@ class OrderServiceTest {
         }
 
         @Test
-        @DisplayName("저장해서 받은 주문 ID 로 항목마다 재고를 예약하고 주문과 같은 만료 시각을 넘긴다")
+        @DisplayName("저장해서 받은 주문 ID 로 모든 항목의 재고를 한 번에 예약하고 주문과 같은 만료 시각을 넘긴다")
         void 항목별_재고_예약() {
-            given(productRepository.findAllById(List.of(1L, 2L)))
+            given(productUseCase.findAllByIds(List.of(1L, 2L)))
                 .willReturn(List.of(product(1L, "상품1", "1000"), product(2L, "상품2", "2000")));
             givenOrderSaveAssignsId(42L);
 
             orderService.createOrder(request(1L, line(1L, 2), line(2L, 3)));
 
-            verify(stockReservationService).reserve(eq(42L), eq(1L), eq(2), expireAtCaptor.capture());
-            verify(stockReservationService).reserve(eq(42L), eq(2L), eq(3), expireAtCaptor.capture());
+            verify(stockUseCase).reserve(reserveCaptor.capture());
+            ReserveStockCommand command = reserveCaptor.getValue();
+            assertThat(command.orderId()).isEqualTo(42L);
+            assertThat(command.lines()).containsExactly(
+                new ReserveStockCommand.Line(1L, 2),
+                new ReserveStockCommand.Line(2L, 3));
 
             verify(orderRepository).save(orderCaptor.capture());
-            assertThat(expireAtCaptor.getAllValues()).containsOnly(orderCaptor.getValue().getExpireAt());
+            assertThat(command.expireAt()).isEqualTo(orderCaptor.getValue().getExpireAt());
         }
 
         @Test
         @DisplayName("만료 시각을 설정된 분만큼 뒤로 잡는다")
         void 만료_시각() {
-            given(productRepository.findAllById(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
+            given(productUseCase.findAllByIds(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
             givenOrderSaveAssignsId(1L);
 
             LocalDateTime before = LocalDateTime.now();
@@ -224,7 +204,7 @@ class OrderServiceTest {
         @Test
         @DisplayName("같은 상품을 여러 줄로 주문하면 항목도 줄 수만큼 담고 각각 예약한다")
         void 같은_상품_여러_줄() {
-            given(productRepository.findAllById(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
+            given(productUseCase.findAllByIds(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
             givenOrderSaveAssignsId(1L);
 
             orderService.createOrder(request(1L, line(1L, 3), line(1L, 5)));
@@ -235,14 +215,16 @@ class OrderServiceTest {
             assertThat(saved.getItems()).extracting(OrderItem::getQuantity).containsExactly(3, 5);
             assertThat(saved.getTotalPrice()).isEqualByComparingTo("8000");
 
-            verify(stockReservationService).reserve(eq(1L), eq(1L), eq(3), any(LocalDateTime.class));
-            verify(stockReservationService).reserve(eq(1L), eq(1L), eq(5), any(LocalDateTime.class));
+            verify(stockUseCase).reserve(reserveCaptor.capture());
+            assertThat(reserveCaptor.getValue().lines()).containsExactly(
+                new ReserveStockCommand.Line(1L, 3),
+                new ReserveStockCommand.Line(1L, 5));
         }
 
         @Test
         @DisplayName("항목 목록은 읽기 전용이라 밖에서 담을 수 없다")
         void 항목_목록_읽기_전용() {
-            given(productRepository.findAllById(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
+            given(productUseCase.findAllByIds(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
             givenOrderSaveAssignsId(1L);
 
             orderService.createOrder(request(1L, line(1L, 1)));
@@ -257,7 +239,7 @@ class OrderServiceTest {
         @Test
         @DisplayName("없는 상품이 섞여 있으면 주문을 저장하지 않고 INVALID_ORDER_ITEM 으로 실패한다")
         void 상품_없음() {
-            given(productRepository.findAllById(List.of(1L, 9999L)))
+            given(productUseCase.findAllByIds(List.of(1L, 9999L)))
                 .willReturn(List.of(product(1L, "상품1", "1000")));
 
             assertThatThrownBy(() -> orderService.createOrder(request(1L, line(1L, 1), line(9999L, 1))))
@@ -267,17 +249,16 @@ class OrderServiceTest {
                 .isEqualTo(OrderErrorCode.INVALID_ORDER_ITEM);
 
             verify(orderRepository, never()).save(any());
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
 
         // 재고 레코드의 존재는 재고 컨텍스트가 예약하면서 확인한다
         @Test
         @DisplayName("재고 레코드가 없으면 예약 단계의 STOCK_NOT_FOUND 가 그대로 전파된다")
         void 재고_레코드_없음() {
-            given(productRepository.findAllById(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
+            given(productUseCase.findAllByIds(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
             givenOrderSaveAssignsId(1L);
-            doThrow(StockErrorCode.STOCK_NOT_FOUND.exception())
-                .when(stockReservationService).reserve(anyLong(), eq(1L), eq(1), any());
+            doThrow(StockErrorCode.STOCK_NOT_FOUND.exception()).when(stockUseCase).reserve(any());
 
             assertThatThrownBy(() -> orderService.createOrder(request(1L, line(1L, 1))))
                 .isInstanceOf(BusinessException.class)
@@ -288,10 +269,9 @@ class OrderServiceTest {
         @Test
         @DisplayName("재고가 부족하면 예약 단계의 OUT_OF_STOCK 이 그대로 전파된다")
         void 재고_부족_전파() {
-            given(productRepository.findAllById(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
+            given(productUseCase.findAllByIds(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
             givenOrderSaveAssignsId(1L);
-            doThrow(StockErrorCode.OUT_OF_STOCK.exception())
-                .when(stockReservationService).reserve(anyLong(), eq(1L), eq(5), any());
+            doThrow(StockErrorCode.OUT_OF_STOCK.exception()).when(stockUseCase).reserve(any());
 
             assertThatThrownBy(() -> orderService.createOrder(request(1L, line(1L, 5))))
                 .isInstanceOf(BusinessException.class)
@@ -314,7 +294,7 @@ class OrderServiceTest {
 
             assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.CANCELLED);
             assertThat(order.getCancelledAt()).isNotNull();
-            verify(stockReservationService).cancel(1L);
+            verify(stockUseCase).cancelReservations(1L);
         }
 
         @Test
@@ -328,7 +308,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
 
         @Test
@@ -342,7 +322,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CANCELLED);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
 
         @Test
@@ -356,7 +336,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_EXPIRED);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
 
         @Test
@@ -370,7 +350,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
 
         @Test
@@ -383,7 +363,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_PAYMENT_FAILED);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
     }
 
@@ -402,7 +382,7 @@ class OrderServiceTest {
             assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.CONFIRMED);
             assertThat(order.getConfirmedAt()).isNotNull();
             assertThat(order.getCancelledAt()).isNull();
-            verify(stockReservationService).confirm(1L);
+            verify(stockUseCase).confirmReservations(1L);
         }
 
         @Test
@@ -415,7 +395,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
 
         @Test
@@ -428,7 +408,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
 
         @Test
@@ -441,7 +421,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_PAYMENT_FAILED);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
 
         // 만료 스케줄러가 아직 돌지 않아 주문은 PENDING 이지만 예약의 결제 마감은 지난 경우.
@@ -450,7 +430,7 @@ class OrderServiceTest {
         @DisplayName("예약 확정이 RESERVATION_EXPIRED 로 거절되면 그대로 전파한다")
         void 결제_마감_지남() {
             given(orderRepository.findById(1L)).willReturn(Optional.of(pendingOrder(1L)));
-            doThrow(ReservationErrorCode.RESERVATION_EXPIRED.exception()).when(stockReservationService).confirm(1L);
+            doThrow(ReservationErrorCode.RESERVATION_EXPIRED.exception()).when(stockUseCase).confirmReservations(1L);
 
             assertThatThrownBy(() -> orderService.confirmOrder(1L))
                 .isInstanceOf(BusinessException.class)
@@ -474,7 +454,7 @@ class OrderServiceTest {
             assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
             assertThat(order.getCancelledAt()).isNotNull();
             assertThat(order.getConfirmedAt()).isNull();
-            verify(stockReservationService).cancel(1L);
+            verify(stockUseCase).cancelReservations(1L);
         }
 
         @Test
@@ -487,7 +467,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
 
         @Test
@@ -500,7 +480,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
 
         @Test
@@ -512,7 +492,7 @@ class OrderServiceTest {
             orderService.failPayment(1L);
 
             assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
-            verify(stockReservationService).cancel(1L);
+            verify(stockUseCase).cancelReservations(1L);
         }
     }
 
@@ -547,7 +527,7 @@ class OrderServiceTest {
 
             assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.EXPIRED);
             assertThat(order.getCancelledAt()).isNotNull();
-            verify(stockReservationService).expire(1L);
+            verify(stockUseCase).expireReservations(1L);
         }
 
         @Test
@@ -572,7 +552,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
 
         // 스케줄러가 ID 를 읽은 뒤 결제가 먼저 끝난 경우
@@ -586,7 +566,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
 
         @Test
@@ -599,7 +579,7 @@ class OrderServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CANCELLED);
 
-            verifyNoInteractions(stockReservationService);
+            verifyNoInteractions(stockUseCase);
         }
     }
 

@@ -113,7 +113,7 @@ src/main/java/com/roykhan/dddorderboundary
 │   │   │   ├── StockReservation.java    # 예약 주체(주문 ID)·수량·만료 시각
 │   │   │   ├── StockStatus.java
 │   │   │   └── ReservationStatus.java
-│   │   ├── repository
+│   │   ├── repository                   # 출력 포트 — 일반 인터페이스
 │   │   │   ├── ProductRepository.java
 │   │   │   ├── StockRepository.java
 │   │   │   └── StockReservationRepository.java  # 주문 ID 로 예약 조회
@@ -122,18 +122,28 @@ src/main/java/com/roykhan/dddorderboundary
 │   │       ├── StockErrorCode.java
 │   │       └── ReservationErrorCode.java
 │   ├── application
+│   │   ├── usecase                      # 입력 포트 — 컨텍스트 바깥은 이것으로만 들어온다
+│   │   │   ├── ProductUseCase.java
+│   │   │   └── StockUseCase.java        # 재고 조회, 주문 ID 단위 예약·확정·해제·만료
 │   │   ├── service
-│   │   │   ├── ProductService.java
-│   │   │   ├── StockService.java        # 재고 조회
-│   │   │   └── StockReservationService.java     # 주문 ID 단위로 예약·확정·해제·만료
+│   │   │   ├── ProductApplicationService.java
+│   │   │   └── StockApplicationService.java
 │   │   └── dto
-│   │       ├── ProductInfo.java         # 상품 조회 응답
-│   │       └── StockInfo.java           # 재고 조회 응답 (총 재고·가용·예약 수량)
+│   │       ├── RegisterProductCommand.java
+│   │       ├── UpdateProductCommand.java    # 재고 수량은 담지 않음
+│   │       ├── ReserveStockCommand.java     # 한 주문의 항목들을 같은 결제 마감으로 예약
+│   │       ├── ProductInfo.java         # 상품 조회 결과
+│   │       └── StockInfo.java           # 재고 조회 결과 (총 재고·가용·예약 수량)
+│   ├── infrastructure
+│   │   └── persistence                  # 출력 어댑터 — 저장소 포트를 Spring Data JPA 로 구현
+│   │       ├── ProductRepositoryAdapter.java / ProductJpaRepository.java
+│   │       ├── StockRepositoryAdapter.java / StockJpaRepository.java
+│   │       └── StockReservationRepositoryAdapter.java / StockReservationJpaRepository.java
 │   └── presentation
 │       ├── controller
 │       │   ├── ProductController.java
 │       │   └── StockController.java
-│       └── dto/ProductRegisterRequest.java  # 등록/수정 요청 (초기 재고 수량 포함)
+│       └── dto/ProductRegisterRequest.java  # 등록/수정 요청 → 커맨드로 변환
 └── payment                              # 결제 컨텍스트 (목업) — 상태 없이 결과만 주문에 전달
     ├── domain/model/PaymentResult.java  # SUCCESS / FAILURE
     ├── application/service/PaymentService.java  # 결과를 주문 확정·결제 실패 호출로 변환
@@ -146,7 +156,7 @@ docs/섹션1                                # 섹션 1 미션 산출물 (설계 
 docs/섹션2-데모.http                       # 라이브 데모 시나리오
 ```
 
-컨텍스트마다 `domain / application / presentation` 으로 나눈 상태입니다. 아직 포트·어댑터가 없어 헥사고날의 모양만 갖춘 단계이고, `infrastructure` 계층은 포트·어댑터를 들이는 3~5단계에서 생깁니다. 목표 구조와 순서, 지금 남아 있는 의존은 [헥사고날 전환 계획](#헥사고날-전환-계획)에 정리했습니다.
+컨텍스트마다 `domain / application / infrastructure / presentation` 으로 나눕니다. 지금은 상품 컨텍스트까지 포트·어댑터를 들였고, 주문·결제는 아직 패키지만 나눈 상태라 `infrastructure` 가 없습니다. 목표 구조와 순서, 지금 남아 있는 의존은 [헥사고날 전환 계획](#헥사고날-전환-계획)에 정리했습니다.
 
 재고를 `Product` 가 아닌 별도 엔티티로 둔 것은 컨텍스트를 나눈 것이 아닙니다. 재고는 상품 컨텍스트가 소유하되, 쓰기 경합과 변경 주체가 달라 애그리거트만 분리했습니다. 그래서 패키지도 따로 두지 않고 `product` 컨텍스트 안에 함께 둡니다.
 
@@ -199,7 +209,7 @@ docs/섹션2-데모.http                       # 라이브 데모 시나리오
 ```text
 OrderService.confirmOrder(orderId)
  ├─ Order.confirm()                            주문 상태 전이 (PENDING → CONFIRMED), 불가능하면 여기서 예외
- └─ StockReservationService.confirm(orderId)   그 주문의 예약을 모두 확정 → 총 재고 차감
+ └─ StockUseCase.confirmReservations(orderId)  그 주문의 예약을 모두 확정 → 총 재고 차감
 ```
 
 - 주문 상태 검사에 걸리면 재고 쪽은 호출하지 않습니다. 예약 쪽에서 예외가 나면(`RESERVATION_EXPIRED` 등) 트랜잭션이 함께 되돌아가 주문 상태도 원래대로 남습니다.
@@ -299,7 +309,7 @@ OrderService.confirmOrder(orderId)
 |---|---|---|---|
 | 1 | `refactor/order-stock-reference` | 주문 ↔ 재고 예약의 JPA 연관을 `orderId` 참조로 전환 | 완료 |
 | 2 | `refactor/hexagonal-packages` | 모든 컨텍스트를 새 패키지 구조로 이동 — 동작과 호출 관계는 그대로, `BaseEntity`·에러 코드도 제자리로 | 완료 |
-| 3 | `refactor/hexagonal-product` | 상품 컨텍스트(상품·재고) — 저장소 포트와 어댑터, 상품·재고 유스케이스 | |
+| 3 | `refactor/hexagonal-product` | 상품 컨텍스트(상품·재고) — 저장소 포트와 어댑터, 상품·재고 유스케이스 | 완료 |
 | 4 | `refactor/hexagonal-order` | 주문 컨텍스트 — 상품·재고를 부르는 출력 포트와 어댑터 | |
 | 5 | `refactor/hexagonal-payment` | 결제 컨텍스트 — 주문을 부르는 출력 포트와 어댑터 | |
 
@@ -319,18 +329,46 @@ OrderService.confirmOrder(orderId)
 - 다른 컨텍스트는 그 컨텍스트의 유스케이스로만 부르고, 부르는 쪽은 자기 출력 포트를 거칩니다. 섹션 3 에서 호출 방식이 HTTP·메시지로 바뀌어도 어댑터만 교체하면 됩니다.
 - 도메인 모델과 JPA 엔티티는 분리하지 않습니다. 섹션 2 의 목적은 포트·어댑터로 경계를 드러내는 것이고, 분리가 필요해지면 어댑터 안쪽만 바뀝니다.
 
-2단계(패키지 이동)는 파일 위치와 `package`·`import` 만 바꿨습니다. 클래스 이름과 호출 관계는 그대로라, 아래 의존이 남아 있고 3~5단계에서 하나씩 없앱니다.
+#### 컨텍스트별 포트와 어댑터
+
+**상품 컨텍스트** (3단계)
+
+```text
+ProductController / StockController                  presentation          입력 어댑터
+      │  ProductUseCase / StockUseCase                application/usecase   입력 포트
+      ▼
+ProductApplicationService / StockApplicationService  application/service
+      │  ProductRepository / StockRepository
+      │  / StockReservationRepository                 domain/repository     출력 포트
+      ▼
+*RepositoryAdapter → *JpaRepository                  infrastructure/persistence  출력 어댑터
+```
+
+| 구분 | 이름 | 설명 |
+|---|---|---|
+| 입력 포트 | `ProductUseCase` | 조회·여러 건 조회·등록·수정·삭제. 주문도 상품 정보를 이것으로 읽는다 |
+| 입력 포트 | `StockUseCase` | 재고 조회와 주문 ID 단위 예약·확정·해제·만료. 재고 조회 서비스와 예약 서비스를 하나로 합쳤다 |
+| 출력 포트 | `ProductRepository` · `StockRepository` · `StockReservationRepository` | Spring Data 를 모르는 일반 인터페이스 |
+| 출력 어댑터 | `ProductRepositoryAdapter` · `StockRepositoryAdapter` · `StockReservationRepositoryAdapter` | 같은 이름의 `*JpaRepository`(Spring Data)에 위임 |
+
+- 서비스는 요청 DTO 대신 커맨드(`RegisterProductCommand` · `UpdateProductCommand` · `ReserveStockCommand`)를 받습니다. 요청 DTO 를 커맨드로 바꾸는 일은 presentation 이 맡아, application → presentation 역방향 의존이 사라졌습니다.
+- 수정 커맨드에는 재고 수량이 없습니다. 수정 요청은 등록과 같은 DTO 를 써서 `initialQuantity` 를 받지만, 커맨드로 바꿀 때 버립니다.
+- `Product` 는 `@Setter` 대신 `update()` 로만 바뀝니다.
+- 상품 컨텍스트 바깥(주문)은 이제 상품의 저장소를 만지지 않고 `ProductUseCase` · `StockUseCase` 로만 들어옵니다. 4단계에서 이 호출을 주문 쪽 출력 포트 뒤로 숨깁니다.
+
+#### 지금 남은 의존
+
+4~5단계에서 하나씩 없앱니다.
 
 | 위치 | 지금 남은 의존 | 없애는 단계 |
 |---|---|---|
-| `*/domain/repository` | Spring Data `JpaRepository` 를 그대로 상속해 도메인이 JPA 에 의존 | 컨텍스트마다 포트(일반 인터페이스)와 `infrastructure/persistence` 어댑터로 분리 |
-| `ProductService.register`·`update` | 요청 DTO(`presentation/dto/ProductRegisterRequest`)를 받아 application → presentation 역방향 | 3 상품 — 커맨드 도입 |
+| `order/domain/repository` | `OrderRepository` 가 Spring Data `JpaRepository` 를 그대로 상속해 도메인이 JPA 에 의존 | 4 주문 — 포트와 `infrastructure/persistence` 어댑터로 분리 |
 | `OrderService.createOrder` | 요청 DTO(`presentation/dto/CreateOrderRequest`)를 받아 application → presentation 역방향 | 4 주문 — 커맨드 도입 |
-| `OrderService` | 상품 컨텍스트의 `ProductRepository`·`StockReservationService` 를 직접 호출 | 4 주문 — 상품·재고 출력 포트와 어댑터 |
+| `OrderService` | 상품 컨텍스트의 `ProductUseCase` · `StockUseCase` 를 직접 호출 | 4 주문 — 상품·재고 출력 포트와 어댑터 |
 | `PaymentService` | 주문 컨텍스트의 `OrderService` 를 직접 호출 | 5 결제 — 주문 출력 포트와 어댑터 |
 
-- 저장소 인터페이스는 처음부터 나중에 포트가 될 자리(`domain/repository`)에 두었습니다. 포트와 어댑터로 쪼개도 서비스 코드는 그대로입니다.
-- 서비스 이름도 그대로 두었습니다. 유스케이스 인터페이스(입력 포트)를 들이는 단계에서 `*ApplicationService` 로 바꿉니다.
+- 저장소 인터페이스는 2단계부터 포트 자리(`domain/repository`)에 두었습니다. 상품 컨텍스트에서 포트와 어댑터로 쪼갤 때 서비스 코드는 저장소 쪽으로 한 줄도 바뀌지 않았습니다.
+- 서비스 이름은 유스케이스 인터페이스(입력 포트)를 들이는 단계에서 `*ApplicationService` 로 바꿉니다.
 - enum 은 따로 `enums` 패키지를 두지 않고 모델과 함께 `domain/model` 에 둡니다.
 
 ### 정리 대상
@@ -353,6 +391,8 @@ OrderService.confirmOrder(orderId)
       스프링 것으로 바꿔 조회에 `readOnly` 를 쓸 수 있게 했다
 - [x] `ProductService.findById` 에 읽기 전용 트랜잭션 적용
       상품 조회 메서드에 `readOnly = true`
+- [ ] 상품을 삭제해도 재고가 남음 — `Stock` 은 `productId` 로만 상품을 가리켜, 상품을 지워도 재고 행은 그대로다
+- [ ] 상품 수정 요청을 등록 요청과 분리 — 지금은 같은 DTO 를 써서 수정에 쓰지 않는 `initialQuantity` 까지 필수로 받는다
 - [ ] `GlobalExceptionHandler` 슬라이스 테스트 추가 (현재 회귀 방지 없음)
 - [ ] `OrderController` 슬라이스 테스트 추가
 - [ ] 상품 목록 조회 엔드포인트 *(선택 — 주문 구현에는 불필요)*
