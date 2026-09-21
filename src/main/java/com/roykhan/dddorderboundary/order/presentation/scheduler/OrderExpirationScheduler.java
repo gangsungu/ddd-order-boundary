@@ -1,7 +1,7 @@
 package com.roykhan.dddorderboundary.order.presentation.scheduler;
 
 import com.roykhan.dddorderboundary.common.exception.BusinessException;
-import com.roykhan.dddorderboundary.order.application.service.OrderService;
+import com.roykhan.dddorderboundary.order.application.usecase.OrderUseCase;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -20,7 +20,7 @@ public class OrderExpirationScheduler {
     // 한 주기에 만료시킬 최대 주문 수. 남은 주문은 다음 주기에 처리한다
     private static final int BATCH_SIZE = 100;
 
-    private final OrderService orderService;
+    private final OrderUseCase orderUseCase;
 
     @Scheduled(
         initialDelayString = "${order.reservation.expire-check-interval:30}",
@@ -28,12 +28,12 @@ public class OrderExpirationScheduler {
         timeUnit = TimeUnit.SECONDS
     )
     public void expireOrders() {
-        List<Long> orderIds = orderService.findExpiredOrderIds(LocalDateTime.now(), BATCH_SIZE);
+        List<Long> orderIds = orderUseCase.findExpiredOrderIds(LocalDateTime.now(), BATCH_SIZE);
 
         // 주문마다 트랜잭션을 따로 잡아 한 건이 실패해도 나머지는 만료시킨다
         for (Long orderId : orderIds) {
             try {
-                orderService.expireOrder(orderId);
+                orderUseCase.expireOrder(orderId);
                 log.info("주문 만료: orderId={}", orderId);
             } catch (BusinessException e) {
                 // ID 를 읽은 뒤 결제·취소가 먼저 끝난 주문

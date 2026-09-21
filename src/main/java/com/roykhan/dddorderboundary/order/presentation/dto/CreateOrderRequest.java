@@ -1,5 +1,6 @@
 package com.roykhan.dddorderboundary.order.presentation.dto;
 
+import com.roykhan.dddorderboundary.order.application.dto.CreateOrderCommand;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
@@ -21,4 +22,11 @@ public record CreateOrderRequest(
         @Positive(message = "수량은 1개 이상이어야 합니다.")
         int quantity
     ) {}
+
+    public CreateOrderCommand toCommand() {
+        List<CreateOrderCommand.Line> lines = items.stream()
+            .map(item -> new CreateOrderCommand.Line(item.productId(), item.quantity()))
+            .toList();
+        return new CreateOrderCommand(memberId, lines);
+    }
 }

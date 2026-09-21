@@ -4,7 +4,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-import com.roykhan.dddorderboundary.order.application.service.OrderService;
+import com.roykhan.dddorderboundary.order.application.usecase.OrderUseCase;
 import com.roykhan.dddorderboundary.payment.domain.model.PaymentResult;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,7 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class PaymentServiceTest {
 
     @Mock
-    private OrderService orderService;
+    private OrderUseCase orderUseCase;
 
     @InjectMocks
     private PaymentService paymentService;
@@ -28,8 +28,8 @@ class PaymentServiceTest {
     void 결제_성공() {
         paymentService.applyResult(1L, PaymentResult.SUCCESS);
 
-        verify(orderService).confirmOrder(1L);
-        verify(orderService, never()).failPayment(anyLong());
+        verify(orderUseCase).confirmOrder(1L);
+        verify(orderUseCase, never()).failPayment(anyLong());
     }
 
     @Test
@@ -37,7 +37,7 @@ class PaymentServiceTest {
     void 결제_실패() {
         paymentService.applyResult(1L, PaymentResult.FAILURE);
 
-        verify(orderService).failPayment(1L);
-        verify(orderService, never()).confirmOrder(anyLong());
+        verify(orderUseCase).failPayment(1L);
+        verify(orderUseCase, never()).confirmOrder(anyLong());
     }
 }
