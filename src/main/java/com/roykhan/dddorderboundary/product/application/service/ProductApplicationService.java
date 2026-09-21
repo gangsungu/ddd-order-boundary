@@ -1,14 +1,14 @@
 package com.roykhan.dddorderboundary.product.application.service;
 
-import com.roykhan.dddorderboundary.product.application.dto.ProductInfo;
-import com.roykhan.dddorderboundary.product.application.dto.RegisterProductCommand;
-import com.roykhan.dddorderboundary.product.application.dto.UpdateProductCommand;
-import com.roykhan.dddorderboundary.product.application.usecase.ProductUseCase;
+import com.roykhan.dddorderboundary.product.application.port.in.ProductInfo;
+import com.roykhan.dddorderboundary.product.application.port.in.ProductUseCase;
+import com.roykhan.dddorderboundary.product.application.port.in.RegisterProductCommand;
+import com.roykhan.dddorderboundary.product.application.port.in.UpdateProductCommand;
+import com.roykhan.dddorderboundary.product.application.port.out.ProductRepository;
+import com.roykhan.dddorderboundary.product.application.port.out.StockRepository;
 import com.roykhan.dddorderboundary.product.domain.exception.ProductErrorCode;
 import com.roykhan.dddorderboundary.product.domain.model.Product;
 import com.roykhan.dddorderboundary.product.domain.model.Stock;
-import com.roykhan.dddorderboundary.product.domain.repository.ProductRepository;
-import com.roykhan.dddorderboundary.product.domain.repository.StockRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;

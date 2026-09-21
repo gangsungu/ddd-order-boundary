@@ -1,7 +1,7 @@
 package com.roykhan.dddorderboundary.payment.application.service;
 
-import com.roykhan.dddorderboundary.payment.application.port.OrderPort;
-import com.roykhan.dddorderboundary.payment.application.usecase.PaymentUseCase;
+import com.roykhan.dddorderboundary.payment.application.port.in.PaymentUseCase;
+import com.roykhan.dddorderboundary.payment.application.port.out.OrderPort;
 import com.roykhan.dddorderboundary.payment.domain.model.PaymentResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
