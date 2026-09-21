@@ -94,16 +94,22 @@ src/main/java/com/roykhan/dddorderboundary
 │   │   │   ├── Order.java               # 주문 애그리거트 루트 — 상태 전이와 총액 계산
 │   │   │   ├── OrderItem.java           # 주문 시점 상품명·단가 스냅샷
 │   │   │   └── OrderStatus.java
-│   │   ├── repository/OrderRepository.java
+│   │   ├── repository/OrderRepository.java  # 출력 포트 — 일반 인터페이스
 │   │   └── exception/OrderErrorCode.java
 │   ├── application
-│   │   ├── service/OrderService.java
-│   │   └── dto/OrderInfo.java           # 조회 응답 (항목 내역 포함)
+│   │   ├── usecase/OrderUseCase.java    # 입력 포트 — 컨트롤러·스케줄러·결제가 이것으로 들어온다
+│   │   ├── service/OrderApplicationService.java
+│   │   └── dto
+│   │       ├── CreateOrderCommand.java
+│   │       └── OrderInfo.java           # 조회 결과 (항목 내역 포함)
+│   ├── infrastructure
+│   │   └── persistence                  # 출력 어댑터 — 주문 저장소 포트를 Spring Data JPA 로 구현
+│   │       └── OrderRepositoryAdapter.java / OrderJpaRepository.java
 │   └── presentation
 │       ├── controller/OrderController.java
 │       ├── scheduler/OrderExpirationScheduler.java  # 결제 마감이 지난 주문 만료
 │       └── dto
-│           ├── CreateOrderRequest.java  # 생성 요청 (중첩 OrderLine)
+│           ├── CreateOrderRequest.java  # 생성 요청 (중첩 OrderLine) → 커맨드로 변환
 │           └── OrderCreateInfo.java     # 생성 응답 (주문 ID)
 ├── product                              # 상품 컨텍스트 — 상품과 재고
 │   ├── domain
@@ -156,7 +162,7 @@ docs/섹션1                                # 섹션 1 미션 산출물 (설계 
 docs/섹션2-데모.http                       # 라이브 데모 시나리오
 ```
 
-컨텍스트마다 `domain / application / infrastructure / presentation` 으로 나눕니다. 지금은 상품 컨텍스트까지 포트·어댑터를 들였고, 주문·결제는 아직 패키지만 나눈 상태라 `infrastructure` 가 없습니다. 목표 구조와 순서, 지금 남아 있는 의존은 [헥사고날 전환 계획](#헥사고날-전환-계획)에 정리했습니다.
+컨텍스트마다 `domain / application / infrastructure / presentation` 으로 나눕니다. 지금은 상품 컨텍스트까지 포트·어댑터를 들였고, 주문 컨텍스트는 저장소 포트와 유스케이스까지 들인 상태입니다. 결제는 아직 패키지만 나눈 상태라 `infrastructure` 가 없습니다. 목표 구조와 순서, 지금 남아 있는 의존은 [헥사고날 전환 계획](#헥사고날-전환-계획)에 정리했습니다.
 
 재고를 `Product` 가 아닌 별도 엔티티로 둔 것은 컨텍스트를 나눈 것이 아닙니다. 재고는 상품 컨텍스트가 소유하되, 쓰기 경합과 변경 주체가 달라 애그리거트만 분리했습니다. 그래서 패키지도 따로 두지 않고 `product` 컨텍스트 안에 함께 둡니다.
 
@@ -207,7 +213,7 @@ docs/섹션2-데모.http                       # 라이브 데모 시나리오
 주문과 재고 예약은 객체로 묶지 않고 **주문 ID 로만 연결**합니다. `Order` 는 예약을 들지 않고 자기 상태 전이만 책임지며, 예약(`StockReservation`)이 `orderId` 를 가집니다. 주문 서비스는 주문 상태를 먼저 바꾼 뒤, 같은 트랜잭션 안에서 그 주문 ID 의 예약을 확정·해제·만료하도록 재고 쪽에 요청합니다.
 
 ```text
-OrderService.confirmOrder(orderId)
+OrderApplicationService.confirmOrder(orderId)
  ├─ Order.confirm()                            주문 상태 전이 (PENDING → CONFIRMED), 불가능하면 여기서 예외
  └─ StockUseCase.confirmReservations(orderId)  그 주문의 예약을 모두 확정 → 총 재고 차감
 ```
@@ -310,7 +316,7 @@ OrderService.confirmOrder(orderId)
 | 1 | `refactor/order-stock-reference` | 주문 ↔ 재고 예약의 JPA 연관을 `orderId` 참조로 전환 | 완료 |
 | 2 | `refactor/hexagonal-packages` | 모든 컨텍스트를 새 패키지 구조로 이동 — 동작과 호출 관계는 그대로, `BaseEntity`·에러 코드도 제자리로 | 완료 |
 | 3 | `refactor/hexagonal-product` | 상품 컨텍스트(상품·재고) — 저장소 포트와 어댑터, 상품·재고 유스케이스 | 완료 |
-| 4 | `refactor/hexagonal-order` | 주문 컨텍스트 — 상품·재고를 부르는 출력 포트와 어댑터 | |
+| 4 | `refactor/hexagonal-order` | 주문 컨텍스트 — 상품·재고를 부르는 출력 포트와 어댑터 | 진행 중 |
 | 5 | `refactor/hexagonal-payment` | 결제 컨텍스트 — 주문을 부르는 출력 포트와 어댑터 | |
 
 - 연관을 먼저 끊는 이유: 끊지 않고 옮기면 상품 컨텍스트로 간 `StockReservation` 이 주문 엔티티를 import 해, 컨텍스트 경계가 코드에서부터 깨집니다.
@@ -354,21 +360,17 @@ ProductApplicationService / StockApplicationService  application/service
 - 서비스는 요청 DTO 대신 커맨드(`RegisterProductCommand` · `UpdateProductCommand` · `ReserveStockCommand`)를 받습니다. 요청 DTO 를 커맨드로 바꾸는 일은 presentation 이 맡아, application → presentation 역방향 의존이 사라졌습니다.
 - 수정 커맨드에는 재고 수량이 없습니다. 수정 요청은 등록과 같은 DTO 를 써서 `initialQuantity` 를 받지만, 커맨드로 바꿀 때 버립니다.
 - `Product` 는 `@Setter` 대신 `update()` 로만 바뀝니다.
-- 상품 컨텍스트 바깥(주문)은 이제 상품의 저장소를 만지지 않고 `ProductUseCase` · `StockUseCase` 로만 들어옵니다. 4단계에서 이 호출을 주문 쪽 출력 포트 뒤로 숨깁니다.
+- 상품 컨텍스트 바깥(주문)은 상품의 저장소를 만지지 않고 `ProductUseCase` · `StockUseCase` 로만 들어옵니다.
 
 #### 지금 남은 의존
 
-4~5단계에서 하나씩 없앱니다.
-
 | 위치 | 지금 남은 의존 | 없애는 단계 |
 |---|---|---|
-| `order/domain/repository` | `OrderRepository` 가 Spring Data `JpaRepository` 를 그대로 상속해 도메인이 JPA 에 의존 | 4 주문 — 포트와 `infrastructure/persistence` 어댑터로 분리 |
-| `OrderService.createOrder` | 요청 DTO(`presentation/dto/CreateOrderRequest`)를 받아 application → presentation 역방향 | 4 주문 — 커맨드 도입 |
-| `OrderService` | 상품 컨텍스트의 `ProductUseCase` · `StockUseCase` 를 직접 호출 | 4 주문 — 상품·재고 출력 포트와 어댑터 |
-| `PaymentService` | 주문 컨텍스트의 `OrderService` 를 직접 호출 | 5 결제 — 주문 출력 포트와 어댑터 |
+| `OrderApplicationService` | 상품 컨텍스트의 `ProductUseCase` · `StockUseCase` 를 직접 호출 | 4 주문 — 상품·재고 출력 포트와 어댑터 |
+| `PaymentService` | 주문 컨텍스트의 `OrderUseCase` 를 직접 호출 | 5 결제 — 주문 출력 포트와 어댑터 |
 
-- 저장소 인터페이스는 2단계부터 포트 자리(`domain/repository`)에 두었습니다. 상품 컨텍스트에서 포트와 어댑터로 쪼갤 때 서비스 코드는 저장소 쪽으로 한 줄도 바뀌지 않았습니다.
-- 서비스 이름은 유스케이스 인터페이스(입력 포트)를 들이는 단계에서 `*ApplicationService` 로 바꿉니다.
+- 저장소 인터페이스는 2단계부터 포트 자리(`domain/repository`)에 두었습니다. 상품·주문 컨텍스트에서 포트와 어댑터로 쪼갤 때 서비스 코드는 저장소 쪽으로 바뀌지 않았습니다.
+- 서비스 이름은 유스케이스 인터페이스(입력 포트)를 들이는 단계에서 `*ApplicationService` 로 바꿉니다. (상품 3단계, 주문 4단계)
 - enum 은 따로 `enums` 패키지를 두지 않고 모델과 함께 `domain/model` 에 둡니다.
 
 ### 정리 대상
@@ -394,7 +396,8 @@ ProductApplicationService / StockApplicationService  application/service
 - [ ] 상품을 삭제해도 재고가 남음 — `Stock` 은 `productId` 로만 상품을 가리켜, 상품을 지워도 재고 행은 그대로다
 - [ ] 상품 수정 요청을 등록 요청과 분리 — 지금은 같은 DTO 를 써서 수정에 쓰지 않는 `initialQuantity` 까지 필수로 받는다
 - [ ] `GlobalExceptionHandler` 슬라이스 테스트 추가 (현재 회귀 방지 없음)
-- [ ] `OrderController` 슬라이스 테스트 추가
+- [x] `OrderController` 슬라이스 테스트 추가
+      요청 → 커맨드 변환, 검증 실패, 조회 응답, 취소와 409 를 확인한다
 - [ ] 상품 목록 조회 엔드포인트 *(선택 — 주문 구현에는 불필요)*
 
 ### 섹션 3 이후

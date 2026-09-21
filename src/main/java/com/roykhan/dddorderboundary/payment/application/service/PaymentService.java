@@ -1,6 +1,6 @@
 package com.roykhan.dddorderboundary.payment.application.service;
 
-import com.roykhan.dddorderboundary.order.application.service.OrderService;
+import com.roykhan.dddorderboundary.order.application.usecase.OrderUseCase;
 import com.roykhan.dddorderboundary.payment.domain.model.PaymentResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -12,12 +12,12 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class PaymentService {
 
-    private final OrderService orderService;
+    private final OrderUseCase orderUseCase;
 
     public void applyResult(long orderId, PaymentResult result) {
         switch (result) {
-            case SUCCESS -> orderService.confirmOrder(orderId);
-            case FAILURE -> orderService.failPayment(orderId);
+            case SUCCESS -> orderUseCase.confirmOrder(orderId);
+            case FAILURE -> orderUseCase.failPayment(orderId);
         }
     }
 }

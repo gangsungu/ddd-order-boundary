@@ -10,13 +10,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.roykhan.dddorderboundary.common.exception.BusinessException;
+import com.roykhan.dddorderboundary.order.application.dto.CreateOrderCommand;
 import com.roykhan.dddorderboundary.order.application.dto.OrderInfo;
 import com.roykhan.dddorderboundary.order.domain.exception.OrderErrorCode;
 import com.roykhan.dddorderboundary.order.domain.model.Order;
 import com.roykhan.dddorderboundary.order.domain.model.OrderItem;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
 import com.roykhan.dddorderboundary.order.domain.repository.OrderRepository;
-import com.roykhan.dddorderboundary.order.presentation.dto.CreateOrderRequest;
 import com.roykhan.dddorderboundary.product.application.dto.ProductInfo;
 import com.roykhan.dddorderboundary.product.application.dto.ReserveStockCommand;
 import com.roykhan.dddorderboundary.product.application.usecase.ProductUseCase;
@@ -37,14 +37,13 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 // 재고 수량의 변화는 StockApplicationServiceTest 가 확인한다.
 // 여기서는 주문 상태 전이와, 그 결과로 어떤 주문 ID 의 예약을 확정·해제하도록 요청하는지만 본다
 @ExtendWith(MockitoExtension.class)
-@DisplayName("OrderService 단위 테스트")
-class OrderServiceTest {
+@DisplayName("OrderApplicationService 단위 테스트")
+class OrderApplicationServiceTest {
 
     private static final int EXPIRE_MINUTES = 10;
 
@@ -58,7 +57,7 @@ class OrderServiceTest {
     private StockUseCase stockUseCase;
 
     @InjectMocks
-    private OrderService orderService;
+    private OrderApplicationService orderService;
 
     @Captor
     private ArgumentCaptor<Order> orderCaptor;
@@ -76,12 +75,12 @@ class OrderServiceTest {
         return new ProductInfo(id, name, "설명", new BigDecimal(price));
     }
 
-    private static CreateOrderRequest request(Long memberId, CreateOrderRequest.OrderLine... lines) {
-        return new CreateOrderRequest(memberId, List.of(lines));
+    private static CreateOrderCommand command(Long memberId, CreateOrderCommand.Line... lines) {
+        return new CreateOrderCommand(memberId, List.of(lines));
     }
 
-    private static CreateOrderRequest.OrderLine line(Long productId, int quantity) {
-        return new CreateOrderRequest.OrderLine(productId, quantity);
+    private static CreateOrderCommand.Line line(Long productId, int quantity) {
+        return new CreateOrderCommand.Line(productId, quantity);
     }
 
     private static Order pendingOrder(long orderId) {
@@ -120,7 +119,7 @@ class OrderServiceTest {
             given(productUseCase.findAllByIds(List.of(1L))).willReturn(List.of(product(1L, "위스키", "1000")));
             givenOrderSaveAssignsId(42L);
 
-            long orderId = orderService.createOrder(request(7L, line(1L, 2)));
+            long orderId = orderService.createOrder(command(7L, line(1L, 2)));
 
             assertThat(orderId).isEqualTo(42L);
 
@@ -138,7 +137,7 @@ class OrderServiceTest {
             given(productUseCase.findAllByIds(List.of(1L))).willReturn(List.of(product(1L, "글렌피딕 12년", "89000.00")));
             givenOrderSaveAssignsId(1L);
 
-            orderService.createOrder(request(1L, line(1L, 3)));
+            orderService.createOrder(command(1L, line(1L, 3)));
 
             verify(orderRepository).save(orderCaptor.capture());
             Order saved = orderCaptor.getValue();
@@ -160,7 +159,7 @@ class OrderServiceTest {
             givenOrderSaveAssignsId(1L);
 
             // 1000 * 2 + 250.50 * 4 = 3002.00
-            orderService.createOrder(request(1L, line(1L, 2), line(2L, 4)));
+            orderService.createOrder(command(1L, line(1L, 2), line(2L, 4)));
 
             verify(orderRepository).save(orderCaptor.capture());
             assertThat(orderCaptor.getValue().getTotalPrice()).isEqualByComparingTo("3002.00");
@@ -173,7 +172,7 @@ class OrderServiceTest {
                 .willReturn(List.of(product(1L, "상품1", "1000"), product(2L, "상품2", "2000")));
             givenOrderSaveAssignsId(42L);
 
-            orderService.createOrder(request(1L, line(1L, 2), line(2L, 3)));
+            orderService.createOrder(command(1L, line(1L, 2), line(2L, 3)));
 
             verify(stockUseCase).reserve(reserveCaptor.capture());
             ReserveStockCommand command = reserveCaptor.getValue();
@@ -193,7 +192,7 @@ class OrderServiceTest {
             givenOrderSaveAssignsId(1L);
 
             LocalDateTime before = LocalDateTime.now();
-            orderService.createOrder(request(1L, line(1L, 1)));
+            orderService.createOrder(command(1L, line(1L, 1)));
             LocalDateTime after = LocalDateTime.now();
 
             verify(orderRepository).save(orderCaptor.capture());
@@ -207,7 +206,7 @@ class OrderServiceTest {
             given(productUseCase.findAllByIds(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
             givenOrderSaveAssignsId(1L);
 
-            orderService.createOrder(request(1L, line(1L, 3), line(1L, 5)));
+            orderService.createOrder(command(1L, line(1L, 3), line(1L, 5)));
 
             verify(orderRepository).save(orderCaptor.capture());
             Order saved = orderCaptor.getValue();
@@ -227,7 +226,7 @@ class OrderServiceTest {
             given(productUseCase.findAllByIds(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
             givenOrderSaveAssignsId(1L);
 
-            orderService.createOrder(request(1L, line(1L, 1)));
+            orderService.createOrder(command(1L, line(1L, 1)));
 
             verify(orderRepository).save(orderCaptor.capture());
             List<OrderItem> items = orderCaptor.getValue().getItems();
@@ -242,7 +241,7 @@ class OrderServiceTest {
             given(productUseCase.findAllByIds(List.of(1L, 9999L)))
                 .willReturn(List.of(product(1L, "상품1", "1000")));
 
-            assertThatThrownBy(() -> orderService.createOrder(request(1L, line(1L, 1), line(9999L, 1))))
+            assertThatThrownBy(() -> orderService.createOrder(command(1L, line(1L, 1), line(9999L, 1))))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage(OrderErrorCode.INVALID_ORDER_ITEM.getMessage())
                 .extracting("errorCode")
@@ -260,7 +259,7 @@ class OrderServiceTest {
             givenOrderSaveAssignsId(1L);
             doThrow(StockErrorCode.STOCK_NOT_FOUND.exception()).when(stockUseCase).reserve(any());
 
-            assertThatThrownBy(() -> orderService.createOrder(request(1L, line(1L, 1))))
+            assertThatThrownBy(() -> orderService.createOrder(command(1L, line(1L, 1))))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(StockErrorCode.STOCK_NOT_FOUND);
@@ -273,7 +272,7 @@ class OrderServiceTest {
             givenOrderSaveAssignsId(1L);
             doThrow(StockErrorCode.OUT_OF_STOCK.exception()).when(stockUseCase).reserve(any());
 
-            assertThatThrownBy(() -> orderService.createOrder(request(1L, line(1L, 5))))
+            assertThatThrownBy(() -> orderService.createOrder(command(1L, line(1L, 5))))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(StockErrorCode.OUT_OF_STOCK);
@@ -504,7 +503,7 @@ class OrderServiceTest {
         @DisplayName("PENDING 주문 중 기준 시각 이전에 마감된 것을 요청한 수만큼 조회한다")
         void 만료_대상_조회() {
             LocalDateTime now = LocalDateTime.now();
-            given(orderRepository.findIdsByStatusAndExpireAtBefore(OrderStatus.PENDING, now, PageRequest.of(0, 100)))
+            given(orderRepository.findIdsByStatusAndExpireAtBefore(OrderStatus.PENDING, now, 100))
                 .willReturn(List.of(3L, 1L));
 
             List<Long> orderIds = orderService.findExpiredOrderIds(now, 100);
