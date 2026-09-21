@@ -8,8 +8,6 @@ import com.roykhan.dddorderboundary.domain.order.enums.OrderStatus;
 import com.roykhan.dddorderboundary.domain.order.repository.OrderRepository;
 import com.roykhan.dddorderboundary.domain.product.Product;
 import com.roykhan.dddorderboundary.domain.product.repository.ProductRepository;
-import com.roykhan.dddorderboundary.domain.stock.Stock;
-import com.roykhan.dddorderboundary.domain.stock.repository.StockRepository;
 import com.roykhan.dddorderboundary.domain.stock.service.StockReservationService;
 import jakarta.validation.Valid;
 import java.time.LocalDateTime;
@@ -28,7 +26,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class OrderService {
 
     private final ProductRepository productRepository;
-    private final StockRepository stockRepository;
     private final OrderRepository orderRepository;
 
     private final StockReservationService stockReservationService;
@@ -46,10 +43,7 @@ public class OrderService {
         Map<Long, Product> products = productRepository.findAllById(productIds).stream()
             .collect(Collectors.toMap(Product::getId, Function.identity()));
 
-        Map<Long, Stock> stocks = stockRepository.findAllByProductIdIn(productIds).stream()
-            .collect(Collectors.toMap(Stock::getProductId, Function.identity()));
-
-        if(products.size() != productIds.size() || stocks.size() != productIds.size()) {
+        if(products.size() != productIds.size()) {
             throw OrderErrorCode.INVALID_ORDER_ITEM.exception();
         }
 
@@ -64,9 +58,9 @@ public class OrderService {
 
         orderRepository.save(order);
 
-        // 재고 예약
+        // 재고 예약 - 예약은 주문 ID 로 묶이므로 주문을 먼저 저장해 ID 를 받는다
         for(CreateOrderRequest.OrderLine line : request.items()) {
-            stockReservationService.reserveStock(order, stocks.get(line.productId()), line.quantity(), expireAt);
+            stockReservationService.reserve(order.getId(), line.productId(), line.quantity(), expireAt);
         }
 
         return order.getId();
@@ -84,6 +78,7 @@ public class OrderService {
 
         // 취소 가능한 상태인지는 Order 가 판단한다
         order.cancel();
+        stockReservationService.cancel(orderId);
 
         // 연관된 PENDING 상태 결제도 취소 처리
         // 추후 작업 부분
@@ -93,12 +88,14 @@ public class OrderService {
     @Transactional
     public void confirmOrder(long orderId) {
         getOrder(orderId).confirm();
+        stockReservationService.confirm(orderId);
     }
 
     // 결제 실패 - 예약을 해제해 재고를 복원한다
     @Transactional
     public void failPayment(long orderId) {
         getOrder(orderId).failPayment();
+        stockReservationService.cancel(orderId);
     }
 
     // 결제 마감이 지난 PENDING 주문 ID
@@ -112,6 +109,7 @@ public class OrderService {
     @Transactional
     public void expireOrder(long orderId) {
         getOrder(orderId).expire();
+        stockReservationService.expire(orderId);
     }
 
     private Order getOrder(long orderId) {

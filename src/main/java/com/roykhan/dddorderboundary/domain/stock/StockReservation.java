@@ -2,7 +2,6 @@ package com.roykhan.dddorderboundary.domain.stock;
 
 import com.roykhan.dddorderboundary.common.exception.ReservationErrorCode;
 import com.roykhan.dddorderboundary.domain.base.BaseEntity;
-import com.roykhan.dddorderboundary.domain.order.Order;
 import com.roykhan.dddorderboundary.domain.stock.enums.ReservationStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -23,9 +22,9 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class StockReservation extends BaseEntity {
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "order_id", nullable = false)
-    private Order order;
+    // 예약 주체는 다른 컨텍스트의 주문이므로 객체가 아닌 ID 로만 참조한다
+    @Column(name = "order_id", nullable = false)
+    private Long orderId;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "stock_id", nullable = false)
@@ -47,16 +46,15 @@ public class StockReservation extends BaseEntity {
     @Column
     private LocalDateTime cancelledAt;
 
-    public static StockReservation create(Stock stock, Order order, int quantity, LocalDateTime expireAt) {
+    public static StockReservation create(Stock stock, Long orderId, int quantity, LocalDateTime expireAt) {
         StockReservation stockReservation = new StockReservation();
         stockReservation.stock = stock;
-        stockReservation.order = order;
+        stockReservation.orderId = orderId;
         stockReservation.reservedQuantity = quantity;
         stockReservation.reservationStatus = ReservationStatus.RESERVED;
         stockReservation.expireAt = expireAt;
 
         stock.reserve(quantity);
-        order.addReservation(stockReservation);
         return stockReservation;
     }
 
@@ -70,19 +68,14 @@ public class StockReservation extends BaseEntity {
         this.stock.confirm(this.reservedQuantity);
     }
 
-    // 사용자 주문 취소 - 재고 예약 해제 처리
-    public void cancelByUser() {
+    // 예약 해제 - 주문 취소나 결제 실패처럼 확정되지 않고 끝난 예약
+    // 재고 입장에서는 해제 사유가 같으므로 CANCELLED 하나로 남긴다. 사유는 주문 상태가 가진다
+    public void cancel() {
         release(ReservationStatus.CANCELLED);
     }
 
-    // 결제 실패에 의한 주문 취소 - 재고 예약 해제 처리
-    // 재고 입장에서는 사용자 취소와 같은 해제라 CANCELLED 로 남긴다. 실패 사유는 주문 상태가 가진다
-    public void cancelByPaymentFailure() {
-        release(ReservationStatus.CANCELLED);
-    }
-
-    // 주문 만료에 의한 주문 취소 - 재고 예약 해제 처리
-    public void cancelByExpiration() {
+    // 예약 만료 - 결제 마감이 지나 풀린 예약
+    public void expire() {
         release(ReservationStatus.EXPIRED);
     }
 
