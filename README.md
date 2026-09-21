@@ -56,7 +56,7 @@ H2 는 `MODE=PostgreSQL` 호환 모드로 동작합니다. 3주차 분산 시스
 
 > 상태 enum 에 값이 추가되면 `./data` 를 지우고 다시 실행해야 합니다. H2 에서는 상태 컬럼이 허용 값을 가진 `ENUM` 타입으로 만들어지고 `ddl-auto: update` 는 기존 컬럼 타입을 바꾸지 않아, 새 값을 저장할 때 500 이 납니다. (예: `OrderStatus.PAYMENT_FAILED` 추가 이전에 만든 DB)
 
-API 를 순서대로 찔러볼 수 있는 시나리오는 [`docs/섹션2-데모.http`](docs/섹션2-데모.http) 에 있습니다. IntelliJ HTTP Client 로 위에서부터 실행하면 상품 등록 → 주문 → 재고 예약 → 결제 확정·실패 → 취소·복원 → 예약 만료 흐름을 그대로 따라갈 수 있습니다. 결제 마감은 기본 10분이라, 예약 만료 구간을 데모에서 바로 보려면 마감과 스케줄러 주기를 줄여서 띄웁니다.
+API 를 순서대로 찔러볼 수 있는 시나리오는 [`docs/섹션2/데모.http`](docs/섹션2/데모.http) 에 있습니다. IntelliJ HTTP Client 로 위에서부터 실행하면 상품 등록 → 주문 → 재고 예약 → 결제 확정·실패 → 취소·복원 → 예약 만료 흐름을 그대로 따라갈 수 있습니다. 결제 마감은 기본 10분이라, 예약 만료 구간을 데모에서 바로 보려면 마감과 스케줄러 주기를 줄여서 띄웁니다.
 
 ```bash
 ./gradlew bootRun --args='--order.reservation.expire-time=1 --order.reservation.expire-check-interval=5'
@@ -176,7 +176,7 @@ src/main/java/com/roykhan/dddorderboundary
 
 src/main/resources/static/payment.html    # 목업 결제 페이지
 docs/섹션1                                # 섹션 1 미션 산출물 (설계 문서)
-docs/섹션2-데모.http                       # 라이브 데모 시나리오
+docs/섹션2                                # 섹션 2 미션 산출물 (의존 분석, 영역 분리, 외부 기술 의존) + 데모 시나리오
 ```
 
 컨텍스트마다 `domain` · `application/port/{in,out}` · `application/service` · `adapter/{in,out}` 으로 나눕니다. 패키지 이름만 봐도 호출 방향이 보이도록, 들어오는 쪽은 `in`, 나가는 쪽은 `out` 으로 모았습니다. 다른 컨텍스트는 자기 출력 포트로만 부르고, 그 포트를 구현하는 `adapter/out` 의 어댑터만 상대 컨텍스트를 압니다. 전환 순서와 컨텍스트별 포트·어댑터, 컨텍스트 사이 호출 관계는 [헥사고날 전환 계획](#헥사고날-전환-계획)에 정리했습니다.
@@ -492,6 +492,9 @@ PaymentApplicationService
       수정은 `Product.update()` 로만 한다. 기본 생성자도 JPA 용으로 `protected` 로 좁혔다
 - [x] 도메인별 에러 코드를 각 도메인 패키지로 이동 (`ProductErrorCode` / `OrderErrorCode` / `StockErrorCode` / `ReservationErrorCode`)
       `order/domain/exception`, `product/domain/exception` 으로 옮겼다. 공통 계약(`BaseErrorCode`)과 공통 코드만 `common/exception` 에 남는다
+- [ ] 도메인 에러 코드에서 `HttpStatus` 걷어내기 — 에러 코드는 종류만 갖고 HTTP 상태 변환은 웹 어댑터가 맡는다 ([한계로 남긴 이유](docs/섹션2/핵심-도메인이-외부-기술에-직접-의존하지-않도록-구조-개선.md#2-에러-코드의-http-상태--한계로-남김))
+- [ ] `common` 의 웹 코드(`HealthController` · `GlobalExceptionHandler` · `ApiResponse`)를 `adapter/in/web` 으로 — 위 항목과 함께
+- [ ] *(트레이드오프로 보류)* 도메인 모델에서 JPA 분리 — 섹션 3 에서 컨텍스트를 서비스로 떼어 낼 때 다시 판단 ([남긴 이유](docs/섹션2/핵심-도메인이-외부-기술에-직접-의존하지-않도록-구조-개선.md#1-도메인-모델의-jpa-애너테이션--의도한-트레이드오프))
 
 동작과 관련된 것
 
@@ -547,6 +550,25 @@ PaymentApplicationService
 재고는 주문마다 변경되어 쓰기 경합이 생기고 상품 정보는 읽기 위주라 성격이 다르지만, 현재 범위에서는 상품 컨텍스트에 함께 두고 경합이 문제가 되면 분리하기로 했습니다.
 
 재고 예약 모델(`StockReservation`)은 섹션 2에서 함께 도입합니다. 예약 기록은 보상 트랜잭션을 되돌릴 근거이고, 그 보상을 일으키는 결제는 성공·실패만 던지는 목업으로 대신합니다. PG 연동 없이도 결제 실패 → 재고 복원 흐름이 성립하며, 섹션 3에서는 목업 어댑터만 실제 PG 어댑터로 교체하면 됩니다.
+
+---
+
+## 섹션 2 미션
+
+| 미션 | 결과 |
+|---|---|
+| 1. 제공된 Git 저장소의 소스를 내려받는다 | 해당 없음 — 섹션 1 설계를 바탕으로 직접 개발한 소스를 대상으로 했다 |
+| 2. 기존 모놀리식 코드의 의존 관계를 분석한다 | [기존 모놀리식 코드의 의존 관계 분석](docs/섹션2/기존-모놀리식-코드의-의존-관계-분석.md) |
+| 3. Domain / Application / Adapter 영역으로 역할을 분리한다 | **충족** — 세 컨텍스트 모두 `domain` · `application/port/{in,out}` · `application/service` · `adapter/{in,out}`, 의존 방향 위반 0건 ([문서](docs/섹션2/Domain-Application-Adapter-영역으로-역할-분리.md)) |
+| 4. 핵심 도메인이 외부 기술에 직접 의존하지 않도록 구조를 개선한다 | **개선 + 트레이드오프** — 저장소·요청 DTO·다른 컨텍스트 의존은 포트 뒤로 감췄고, 도메인 모델의 JPA 애너테이션은 의도적으로 남겼다. 에러 코드의 HTTP 상태는 한계로 남겼다 ([문서](docs/섹션2/핵심-도메인이-외부-기술에-직접-의존하지-않도록-구조-개선.md)) |
+| 5. 리팩토링한 소스를 Git 저장소에 업로드한다 | 이 저장소 — 단계마다 브랜치와 PR 로 나눠 올렸다 ([전환 계획](#헥사고날-전환-계획)) |
+
+| 문서 | 내용 |
+|---|---|
+| [기존 모놀리식 코드의 의존 관계 분석](docs/섹션2/기존-모놀리식-코드의-의존-관계-분석.md) | 전환 직전 코드의 컨텍스트 사이·계층 사이·외부 기술 의존, 끊고·감추고·뒤집어야 할 것 |
+| [Domain / Application / Adapter 영역으로 역할 분리](docs/섹션2/Domain-Application-Adapter-영역으로-역할-분리.md) | 영역별 역할, 컨텍스트별 포트와 어댑터, 전환 과정 6단계, import 기반 의존 방향 검증 |
+| [핵심 도메인이 외부 기술에 직접 의존하지 않도록 구조 개선](docs/섹션2/핵심-도메인이-외부-기술에-직접-의존하지-않도록-구조-개선.md) | 개선한 의존, 영역별 외부 기술 현황, JPA 애너테이션을 남긴 트레이드오프와 HTTP 상태의 한계 |
+| [데모 시나리오](docs/섹션2/데모.http) | 상품 등록 → 주문 → 결제 확정·실패 → 취소 → 예약 만료를 순서대로 호출하는 IntelliJ HTTP Client 파일 |
 
 ---
 
