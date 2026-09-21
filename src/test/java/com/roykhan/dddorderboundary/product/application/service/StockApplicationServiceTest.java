@@ -5,14 +5,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.roykhan.dddorderboundary.common.exception.BusinessException;
+import com.roykhan.dddorderboundary.product.application.dto.ReserveStockCommand;
+import com.roykhan.dddorderboundary.product.application.dto.StockInfo;
 import com.roykhan.dddorderboundary.product.domain.exception.ReservationErrorCode;
 import com.roykhan.dddorderboundary.product.domain.exception.StockErrorCode;
 import com.roykhan.dddorderboundary.product.domain.model.ReservationStatus;
 import com.roykhan.dddorderboundary.product.domain.model.Stock;
 import com.roykhan.dddorderboundary.product.domain.model.StockReservation;
+import com.roykhan.dddorderboundary.product.domain.model.StockStatus;
 import com.roykhan.dddorderboundary.product.domain.repository.StockRepository;
 import com.roykhan.dddorderboundary.product.domain.repository.StockReservationRepository;
 import java.time.LocalDateTime;
@@ -28,9 +32,10 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+// 저장소 포트만 목으로 두고 Stock·StockReservation 은 실제 객체를 써서 재고 수량 변화를 확인한다
 @ExtendWith(MockitoExtension.class)
-@DisplayName("StockReservationService 단위 테스트")
-class StockReservationServiceTest {
+@DisplayName("StockApplicationService 단위 테스트")
+class StockApplicationServiceTest {
 
     private static final LocalDateTime LATER = LocalDateTime.now().plusMinutes(10);
 
@@ -41,14 +46,84 @@ class StockReservationServiceTest {
     private StockReservationRepository stockReservationRepository;
 
     @InjectMocks
-    private StockReservationService stockReservationService;
+    private StockApplicationService stockService;
 
     @Captor
     private ArgumentCaptor<StockReservation> reservationCaptor;
 
+    private static ReserveStockCommand reserveCommand(Long orderId, LocalDateTime expireAt, ReserveStockCommand.Line... lines) {
+        return new ReserveStockCommand(orderId, List.of(lines), expireAt);
+    }
+
+    private static ReserveStockCommand.Line line(Long productId, int quantity) {
+        return new ReserveStockCommand.Line(productId, quantity);
+    }
+
     // 예약이 걸린 상태를 만든다. 생성과 동시에 가용 수량이 예약으로 넘어간다
     private void givenReservations(Long orderId, StockReservation... reservations) {
         given(stockReservationRepository.findAllByOrderId(orderId)).willReturn(List.of(reservations));
+    }
+
+    @Nested
+    @DisplayName("findByProductId")
+    class FindByProductId {
+
+        @Test
+        @DisplayName("예약이 걸린 재고는 총 재고와 가용 수량의 차이를 예약 수량으로 보여준다")
+        void 예약_중인_재고_조회() {
+            Stock stock = Stock.create(1L, 10);
+            stock.reserve(3);
+            given(stockRepository.findByProductId(1L)).willReturn(Optional.of(stock));
+
+            StockInfo info = stockService.findByProductId(1L);
+
+            assertThat(info.productId()).isEqualTo(1L);
+            assertThat(info.quantity()).isEqualTo(10);
+            assertThat(info.availableQuantity()).isEqualTo(7);
+            assertThat(info.reservedQuantity()).isEqualTo(3);
+            assertThat(info.stockStatus()).isEqualTo(StockStatus.IN_STOCK);
+        }
+
+        @Test
+        @DisplayName("예약이 확정되면 총 재고가 줄고 예약 수량은 0 이 된다")
+        void 확정된_재고_조회() {
+            Stock stock = Stock.create(1L, 10);
+            stock.reserve(3);
+            stock.confirm(3);
+            given(stockRepository.findByProductId(1L)).willReturn(Optional.of(stock));
+
+            StockInfo info = stockService.findByProductId(1L);
+
+            assertThat(info.quantity()).isEqualTo(7);
+            assertThat(info.availableQuantity()).isEqualTo(7);
+            assertThat(info.reservedQuantity()).isZero();
+        }
+
+        @Test
+        @DisplayName("가용 수량이 모두 예약되면 SOLD_OUT 으로 보여준다")
+        void 품절() {
+            Stock stock = Stock.create(1L, 2);
+            stock.reserve(2);
+            given(stockRepository.findByProductId(1L)).willReturn(Optional.of(stock));
+
+            StockInfo info = stockService.findByProductId(1L);
+
+            assertThat(info.availableQuantity()).isZero();
+            assertThat(info.reservedQuantity()).isEqualTo(2);
+            assertThat(info.stockStatus()).isEqualTo(StockStatus.SOLD_OUT);
+        }
+
+        @Test
+        @DisplayName("재고가 없으면 STOCK_NOT_FOUND 로 실패한다")
+        void 재고_없음() {
+            given(stockRepository.findByProductId(99L)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> stockService.findByProductId(99L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage(StockErrorCode.STOCK_NOT_FOUND.getMessage())
+                .extracting("errorCode")
+                .isEqualTo(StockErrorCode.STOCK_NOT_FOUND);
+        }
     }
 
     @Nested
@@ -61,7 +136,7 @@ class StockReservationServiceTest {
             Stock stock = Stock.create(1L, 10);
             given(stockRepository.findByProductId(1L)).willReturn(Optional.of(stock));
 
-            stockReservationService.reserve(42L, 1L, 3, LATER);
+            stockService.reserve(reserveCommand(42L, LATER, line(1L, 3)));
 
             assertThat(stock.getQuantity()).isEqualTo(10);
             assertThat(stock.getAvailableQuantity()).isEqualTo(7);
@@ -76,11 +151,28 @@ class StockReservationServiceTest {
         }
 
         @Test
+        @DisplayName("항목마다 예약을 만들고 모두 같은 주문 ID 와 결제 마감을 가진다")
+        void 여러_항목_예약() {
+            Stock first = Stock.create(1L, 10);
+            Stock second = Stock.create(2L, 5);
+            given(stockRepository.findByProductId(1L)).willReturn(Optional.of(first));
+            given(stockRepository.findByProductId(2L)).willReturn(Optional.of(second));
+
+            stockService.reserve(reserveCommand(42L, LATER, line(1L, 3), line(2L, 2)));
+
+            verify(stockReservationRepository, times(2)).save(reservationCaptor.capture());
+            assertThat(reservationCaptor.getAllValues())
+                .allMatch(reservation -> reservation.getOrderId() == 42L && reservation.getExpireAt().equals(LATER));
+            assertThat(first.getAvailableQuantity()).isEqualTo(7);
+            assertThat(second.getAvailableQuantity()).isEqualTo(3);
+        }
+
+        @Test
         @DisplayName("재고가 없으면 STOCK_NOT_FOUND 로 실패하고 예약을 저장하지 않는다")
         void 재고_없음() {
             given(stockRepository.findByProductId(99L)).willReturn(Optional.empty());
 
-            assertThatThrownBy(() -> stockReservationService.reserve(42L, 99L, 1, LATER))
+            assertThatThrownBy(() -> stockService.reserve(reserveCommand(42L, LATER, line(99L, 1))))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(StockErrorCode.STOCK_NOT_FOUND);
@@ -94,7 +186,7 @@ class StockReservationServiceTest {
             Stock stock = Stock.create(1L, 2);
             given(stockRepository.findByProductId(1L)).willReturn(Optional.of(stock));
 
-            assertThatThrownBy(() -> stockReservationService.reserve(42L, 1L, 3, LATER))
+            assertThatThrownBy(() -> stockService.reserve(reserveCommand(42L, LATER, line(1L, 3))))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(StockErrorCode.OUT_OF_STOCK);
@@ -105,8 +197,8 @@ class StockReservationServiceTest {
     }
 
     @Nested
-    @DisplayName("confirm")
-    class Confirm {
+    @DisplayName("confirmReservations")
+    class ConfirmReservations {
 
         @Test
         @DisplayName("주문의 예약을 모두 확정하고 예약한 수량만큼 총 재고를 차감한다")
@@ -117,7 +209,7 @@ class StockReservationServiceTest {
             StockReservation b = StockReservation.create(second, 42L, 2, LATER);
             givenReservations(42L, a, b);
 
-            stockReservationService.confirm(42L);
+            stockService.confirmReservations(42L);
 
             assertThat(a.getReservationStatus()).isEqualTo(ReservationStatus.CONFIRMED);
             assertThat(b.getReservationStatus()).isEqualTo(ReservationStatus.CONFIRMED);
@@ -136,7 +228,7 @@ class StockReservationServiceTest {
             Stock stock = Stock.create(1L, 10);
             givenReservations(42L, StockReservation.create(stock, 42L, 3, LocalDateTime.now().minusMinutes(1)));
 
-            assertThatThrownBy(() -> stockReservationService.confirm(42L))
+            assertThatThrownBy(() -> stockService.confirmReservations(42L))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(ReservationErrorCode.RESERVATION_EXPIRED);
@@ -152,7 +244,7 @@ class StockReservationServiceTest {
             reservation.cancel();
             givenReservations(42L, reservation);
 
-            assertThatThrownBy(() -> stockReservationService.confirm(42L))
+            assertThatThrownBy(() -> stockService.confirmReservations(42L))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(ReservationErrorCode.RESERVATION_NOT_CONFIRMABLE);
@@ -162,8 +254,8 @@ class StockReservationServiceTest {
     }
 
     @Nested
-    @DisplayName("cancel")
-    class Cancel {
+    @DisplayName("cancelReservations")
+    class CancelReservations {
 
         @Test
         @DisplayName("주문의 예약을 해제해 CANCELLED 로 남기고 가용 수량을 돌려준다")
@@ -172,7 +264,7 @@ class StockReservationServiceTest {
             StockReservation reservation = StockReservation.create(stock, 42L, 3, LATER);
             givenReservations(42L, reservation);
 
-            stockReservationService.cancel(42L);
+            stockService.cancelReservations(42L);
 
             assertThat(reservation.getReservationStatus()).isEqualTo(ReservationStatus.CANCELLED);
             assertThat(reservation.getCancelledAt()).isNotNull();
@@ -188,7 +280,7 @@ class StockReservationServiceTest {
             reservation.cancel();
             givenReservations(42L, reservation);
 
-            assertThatThrownBy(() -> stockReservationService.cancel(42L))
+            assertThatThrownBy(() -> stockService.cancelReservations(42L))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(ReservationErrorCode.RESERVATION_NOT_CANCELLABLE);
@@ -203,7 +295,7 @@ class StockReservationServiceTest {
             StockReservation reservation = StockReservation.create(stock, 42L, 3, LocalDateTime.now().minusMinutes(1));
             givenReservations(42L, reservation);
 
-            stockReservationService.cancel(42L);
+            stockService.cancelReservations(42L);
 
             assertThat(stock.getAvailableQuantity()).isEqualTo(10);
         }
@@ -213,13 +305,13 @@ class StockReservationServiceTest {
         void 예약_없음() {
             givenReservations(42L);
 
-            stockReservationService.cancel(42L);
+            stockService.cancelReservations(42L);
         }
     }
 
     @Nested
-    @DisplayName("expire")
-    class Expire {
+    @DisplayName("expireReservations")
+    class ExpireReservations {
 
         @Test
         @DisplayName("주문의 예약을 만료시켜 EXPIRED 로 남기고 가용 수량을 돌려준다")
@@ -228,7 +320,7 @@ class StockReservationServiceTest {
             StockReservation reservation = StockReservation.create(stock, 42L, 3, LocalDateTime.now().minusMinutes(1));
             givenReservations(42L, reservation);
 
-            stockReservationService.expire(42L);
+            stockService.expireReservations(42L);
 
             assertThat(reservation.getReservationStatus()).isEqualTo(ReservationStatus.EXPIRED);
             assertThat(stock.getAvailableQuantity()).isEqualTo(10);

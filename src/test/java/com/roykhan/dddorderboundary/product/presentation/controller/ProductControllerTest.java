@@ -14,8 +14,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.roykhan.dddorderboundary.common.config.JacksonConfig;
 import com.roykhan.dddorderboundary.product.application.dto.ProductInfo;
-import com.roykhan.dddorderboundary.product.application.service.ProductService;
-import com.roykhan.dddorderboundary.product.presentation.dto.ProductRegisterRequest;
+import com.roykhan.dddorderboundary.product.application.dto.RegisterProductCommand;
+import com.roykhan.dddorderboundary.product.application.dto.UpdateProductCommand;
+import com.roykhan.dddorderboundary.product.application.usecase.ProductUseCase;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,12 +37,12 @@ class ProductControllerTest {
     private MockMvc mockMvc;
 
     @MockitoBean
-    private ProductService productService;
+    private ProductUseCase productUseCase;
 
     @Test
     @DisplayName("GET /api/product/{id} - 조회한 상품을 data에 담아 반환한다")
     void 상품_단건_조회() throws Exception {
-        given(productService.findById(1L))
+        given(productUseCase.findById(1L))
             .willReturn(new ProductInfo(1L, "키보드", "무접점 45g", new BigDecimal("159000.00")));
 
         mockMvc.perform(get("/api/product/{id}", 1L))
@@ -73,9 +74,9 @@ class ProductControllerTest {
             .andExpect(jsonPath("$.message").value("상품이 등록되었습니다."))
             .andExpect(jsonPath("$.data").doesNotExist());
 
-        ArgumentCaptor<ProductRegisterRequest> captor = ArgumentCaptor.forClass(ProductRegisterRequest.class);
-        verify(productService).register(captor.capture());
-        ProductRegisterRequest passed = captor.getValue();
+        ArgumentCaptor<RegisterProductCommand> captor = ArgumentCaptor.forClass(RegisterProductCommand.class);
+        verify(productUseCase).register(captor.capture());
+        RegisterProductCommand passed = captor.getValue();
         assertThat(passed.name()).isEqualTo("마우스");
         assertThat(passed.description()).isEqualTo("무선 경량");
         assertThat(passed.price()).isEqualByComparingTo("89000.00");
@@ -99,7 +100,7 @@ class ProductControllerTest {
             .andExpect(jsonPath("$.success").value(false))
             .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
 
-        verify(productService, never()).register(any());
+        verify(productUseCase, never()).register(any());
     }
 
 
@@ -121,8 +122,8 @@ class ProductControllerTest {
             .andExpect(jsonPath("$.message").value("상품 정보가 수정되었습니다."))
             .andExpect(jsonPath("$.data").doesNotExist());
 
-        ArgumentCaptor<ProductRegisterRequest> captor = ArgumentCaptor.forClass(ProductRegisterRequest.class);
-        verify(productService).update(org.mockito.ArgumentMatchers.eq(7L), captor.capture());
+        ArgumentCaptor<UpdateProductCommand> captor = ArgumentCaptor.forClass(UpdateProductCommand.class);
+        verify(productUseCase).update(org.mockito.ArgumentMatchers.eq(7L), captor.capture());
         assertThat(captor.getValue().name()).isEqualTo("새 이름");
     }
 
@@ -135,6 +136,6 @@ class ProductControllerTest {
             .andExpect(jsonPath("$.message").value("상품이 삭제되었습니다."))
             .andExpect(jsonPath("$.data").doesNotExist());
 
-        verify(productService).delete(3L);
+        verify(productUseCase).delete(3L);
     }
 }

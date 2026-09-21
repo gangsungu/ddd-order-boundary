@@ -10,13 +10,15 @@ import static org.mockito.Mockito.verify;
 
 import com.roykhan.dddorderboundary.common.exception.BusinessException;
 import com.roykhan.dddorderboundary.product.application.dto.ProductInfo;
+import com.roykhan.dddorderboundary.product.application.dto.RegisterProductCommand;
+import com.roykhan.dddorderboundary.product.application.dto.UpdateProductCommand;
 import com.roykhan.dddorderboundary.product.domain.exception.ProductErrorCode;
 import com.roykhan.dddorderboundary.product.domain.model.Product;
 import com.roykhan.dddorderboundary.product.domain.model.Stock;
 import com.roykhan.dddorderboundary.product.domain.repository.ProductRepository;
 import com.roykhan.dddorderboundary.product.domain.repository.StockRepository;
-import com.roykhan.dddorderboundary.product.presentation.dto.ProductRegisterRequest;
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -29,9 +31,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+// 저장소 포트를 목으로 두고 유스케이스 규칙만 본다
 @ExtendWith(MockitoExtension.class)
-@DisplayName("ProductService 단위 테스트")
-class ProductServiceTest {
+@DisplayName("ProductApplicationService 단위 테스트")
+class ProductApplicationServiceTest {
 
     @Mock
     private ProductRepository productRepository;
@@ -40,7 +43,7 @@ class ProductServiceTest {
     private StockRepository stockRepository;
 
     @InjectMocks
-    private ProductService productService;
+    private ProductApplicationService productService;
 
     @Captor
     private ArgumentCaptor<Product> productCaptor;
@@ -58,12 +61,21 @@ class ProductServiceTest {
         return product;
     }
 
-    private static ProductRegisterRequest request(String name, String description, String price) {
-        return request(name, description, price, 10);
+    private static RegisterProductCommand registerCommand(String name, String description, String price, int initialQuantity) {
+        return new RegisterProductCommand(name, description, new BigDecimal(price), initialQuantity);
     }
 
-    private static ProductRegisterRequest request(String name, String description, String price, int initialQuantity) {
-        return new ProductRegisterRequest(name, description, new BigDecimal(price), initialQuantity);
+    private static UpdateProductCommand updateCommand(String name, String description, String price) {
+        return new UpdateProductCommand(name, description, new BigDecimal(price));
+    }
+
+    // 저장 시점에 식별자가 부여되는 JPA 동작을 흉내낸다. 재고가 상품 ID 로 묶이므로 필요하다
+    private void givenProductSaveAssignsId(long id) {
+        given(productRepository.save(any(Product.class))).willAnswer(invocation -> {
+            Product product = invocation.getArgument(0);
+            ReflectionTestUtils.setField(product, "id", id);
+            return product;
+        });
     }
 
     @Nested
@@ -98,16 +110,35 @@ class ProductServiceTest {
     }
 
     @Nested
+    @DisplayName("findAllByIds")
+    class FindAllByIds {
+
+        @Test
+        @DisplayName("요청한 ID 중 있는 상품만 ProductInfo로 변환해 반환한다")
+        void 여러_건_조회() {
+            given(productRepository.findAllById(List.of(1L, 2L, 99L)))
+                .willReturn(List.of(product(1L, "키보드", "무접점", "1000"), product(2L, "마우스", "무선", "2000")));
+
+            List<ProductInfo> infos = productService.findAllByIds(List.of(1L, 2L, 99L));
+
+            assertThat(infos).extracting(ProductInfo::id).containsExactly(1L, 2L);
+            assertThat(infos).extracting(ProductInfo::name).containsExactly("키보드", "마우스");
+        }
+    }
+
+    @Nested
     @DisplayName("register")
     class Register {
 
         @Test
-        @DisplayName("같은 이름의 상품이 없으면 저장한다")
+        @DisplayName("같은 이름의 상품이 없으면 저장하고 부여된 상품 ID 를 반환한다")
         void 등록_성공() {
             given(productRepository.existsByName("마우스")).willReturn(false);
+            givenProductSaveAssignsId(7L);
 
-            productService.register(request("마우스", "무선 경량", "89000.00"));
+            Long productId = productService.register(registerCommand("마우스", "무선 경량", "89000.00", 10));
 
+            assertThat(productId).isEqualTo(7L);
             verify(productRepository).save(productCaptor.capture());
             Product saved = productCaptor.getValue();
             assertThat(saved.getName()).isEqualTo("마우스");
@@ -119,13 +150,9 @@ class ProductServiceTest {
         @DisplayName("상품을 저장하면 요청한 초기 수량으로 재고도 함께 만든다")
         void 등록_재고_생성() {
             given(productRepository.existsByName("마우스")).willReturn(false);
-            given(productRepository.save(any(Product.class))).willAnswer(invocation -> {
-                Product product = invocation.getArgument(0);
-                ReflectionTestUtils.setField(product, "id", 7L);
-                return product;
-            });
+            givenProductSaveAssignsId(7L);
 
-            productService.register(request("마우스", "무선 경량", "89000.00", 25));
+            productService.register(registerCommand("마우스", "무선 경량", "89000.00", 25));
 
             verify(stockRepository).save(stockCaptor.capture());
             Stock stock = stockCaptor.getValue();
@@ -139,7 +166,7 @@ class ProductServiceTest {
         void 등록_중복() {
             given(productRepository.existsByName("마우스")).willReturn(true);
 
-            assertThatThrownBy(() -> productService.register(request("마우스", "무선 경량", "89000.00")))
+            assertThatThrownBy(() -> productService.register(registerCommand("마우스", "무선 경량", "89000.00", 10)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage(ProductErrorCode.PRODUCT_ALREADY_EXIST.getMessage())
                 .extracting("errorCode")
@@ -155,12 +182,12 @@ class ProductServiceTest {
     class Update {
 
         @Test
-        @DisplayName("조회한 엔티티의 필드를 변경한다 (더티 체킹이므로 save를 호출하지 않는다)")
+        @DisplayName("조회한 상품을 update 로 바꾼다 (더티 체킹이므로 save를 호출하지 않는다)")
         void 수정_성공() {
             Product existing = product(1L, "이전 이름", "이전 설명", "1000.00");
             given(productRepository.findById(1L)).willReturn(Optional.of(existing));
 
-            productService.update(1L, request("새 이름", "새 설명", "2000.00"));
+            productService.update(1L, updateCommand("새 이름", "새 설명", "2000.00"));
 
             assertThat(existing.getName()).isEqualTo("새 이름");
             assertThat(existing.getDescription()).isEqualTo("새 설명");
@@ -173,7 +200,7 @@ class ProductServiceTest {
         void 수정_실패() {
             given(productRepository.findById(99L)).willReturn(Optional.empty());
 
-            assertThatThrownBy(() -> productService.update(99L, request("새 이름", "새 설명", "1")))
+            assertThatThrownBy(() -> productService.update(99L, updateCommand("새 이름", "새 설명", "1")))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage(ProductErrorCode.PRODUCT_NOT_FOUND.getMessage())
                 .extracting("errorCode")
