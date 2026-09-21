@@ -168,7 +168,7 @@ class OrderServiceTest {
 
             orderService.createOrder(request(1L, line(1L, 2)));
 
-            whisky.setPrice(new BigDecimal("50000.00"));
+            whisky.update(whisky.getName(), whisky.getDescription(), new BigDecimal("50000.00"));
 
             verify(orderRepository).save(orderCaptor.capture());
             Order saved = orderCaptor.getValue();

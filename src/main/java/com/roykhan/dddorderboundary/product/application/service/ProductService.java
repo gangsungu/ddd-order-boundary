@@ -7,10 +7,10 @@ import com.roykhan.dddorderboundary.product.domain.model.Stock;
 import com.roykhan.dddorderboundary.product.domain.repository.ProductRepository;
 import com.roykhan.dddorderboundary.product.domain.repository.StockRepository;
 import com.roykhan.dddorderboundary.product.presentation.dto.ProductRegisterRequest;
-import jakarta.transaction.Transactional;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @AllArgsConstructor
@@ -19,6 +19,7 @@ public class ProductService {
     private final ProductRepository productRepository;
     private final StockRepository stockRepository;
 
+    @Transactional(readOnly = true)
     public ProductInfo findById(Long id) {
         Product product = productRepository.findById(id).orElseThrow(
             ProductErrorCode.PRODUCT_NOT_FOUND::exception);
@@ -52,9 +53,7 @@ public class ProductService {
         Product product = productRepository.findById(id).orElseThrow(
             ProductErrorCode.PRODUCT_NOT_FOUND::exception);
 
-        product.setName(req.name());
-        product.setDescription(req.description());
-        product.setPrice(req.price());
+        product.update(req.name(), req.description(), req.price());
     }
 
     @Transactional

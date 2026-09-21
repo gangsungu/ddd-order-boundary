@@ -341,15 +341,18 @@ OrderService.confirmOrder(orderId)
       주문은 예약을 들지 않고, 예약은 주문 ID 만 가진다. 확정·해제는 주문 서비스가 주문 ID 로 요청한다
 - [ ] 만료 시각의 정본을 하나로 — `Order.expireAt` 과 `StockReservation.expireAt` 이 이중 관리됨
       스케줄러는 주문의 마감을, 결제 확정은 예약의 마감을 본다. 지금은 생성 시 같은 값을 넣어 어긋나지 않을 뿐이다
-- [ ] `Product` 엔티티의 클래스 레벨 `@Setter` 제거 — 도메인 모델을 분리할 때 가장 먼저 걸리는 지점
+- [x] `Product` 엔티티의 클래스 레벨 `@Setter` 제거 — 도메인 모델을 분리할 때 가장 먼저 걸리는 지점
+      수정은 `Product.update()` 로만 한다. 기본 생성자도 JPA 용으로 `protected` 로 좁혔다
 - [x] 도메인별 에러 코드를 각 도메인 패키지로 이동 (`ProductErrorCode` / `OrderErrorCode` / `StockErrorCode` / `ReservationErrorCode`)
       `order/domain/exception`, `product/domain/exception` 으로 옮겼다. 공통 계약(`BaseErrorCode`)과 공통 코드만 `common/exception` 에 남는다
 
 동작과 관련된 것
 
 - [ ] 낙관적 락 충돌(`ObjectOptimisticLockingFailureException`)을 409 로 변환 — 현재 500 으로 나감
-- [ ] `jakarta.transaction.Transactional` → 스프링의 `@Transactional` (`ProductService`, `readOnly` 사용 불가)
-- [ ] `ProductService.findById` 에 읽기 전용 트랜잭션 적용
+- [x] `jakarta.transaction.Transactional` → 스프링의 `@Transactional` (`ProductService`, `readOnly` 사용 불가)
+      스프링 것으로 바꿔 조회에 `readOnly` 를 쓸 수 있게 했다
+- [x] `ProductService.findById` 에 읽기 전용 트랜잭션 적용
+      상품 조회 메서드에 `readOnly = true`
 - [ ] `GlobalExceptionHandler` 슬라이스 테스트 추가 (현재 회귀 방지 없음)
 - [ ] `OrderController` 슬라이스 테스트 추가
 - [ ] 상품 목록 조회 엔드포인트 *(선택 — 주문 구현에는 불필요)*
