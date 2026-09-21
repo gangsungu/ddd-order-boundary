@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.roykhan.dddorderboundary.common.exception.BusinessException;
 import com.roykhan.dddorderboundary.common.exception.OrderErrorCode;
+import com.roykhan.dddorderboundary.common.exception.ReservationErrorCode;
 import com.roykhan.dddorderboundary.common.exception.StockErrorCode;
 import com.roykhan.dddorderboundary.domain.order.Order;
 import com.roykhan.dddorderboundary.domain.order.OrderItem;
@@ -96,6 +97,19 @@ class OrderServiceTest {
 
     private static CreateOrderRequest.OrderLine line(Long productId, int quantity) {
         return new CreateOrderRequest.OrderLine(productId, quantity);
+    }
+
+    // 예약까지 걸린 PENDING 주문. 실제 도메인 객체를 써서 재고 변화까지 함께 확인한다
+    private static Order pendingOrder(long orderId, Stock stock, int quantity) {
+        return pendingOrder(orderId, stock, quantity, LocalDateTime.now().plusMinutes(EXPIRE_MINUTES));
+    }
+
+    private static Order pendingOrder(long orderId, Stock stock, int quantity, LocalDateTime expireAt) {
+        Order order = Order.create(1L, expireAt);
+        order.addItem(stock.getProductId(), "상품", new BigDecimal("1000"), quantity);
+        StockReservation.create(stock, order, quantity, expireAt);
+        ReflectionTestUtils.setField(order, "id", orderId);
+        return order;
     }
 
     // 저장 시점에 식별자가 부여되는 JPA 동작을 흉내낸다. createOrder 가 주문 ID 를 반환하므로 필요하다
@@ -310,15 +324,6 @@ class OrderServiceTest {
     @DisplayName("cancelOrder")
     class CancelOrder {
 
-        // 예약까지 걸린 PENDING 주문. 실제 도메인 객체를 써서 재고 복원까지 함께 확인한다
-        private Order pendingOrder(long orderId, Stock stock, int quantity) {
-            Order order = Order.create(1L, LocalDateTime.now().plusMinutes(EXPIRE_MINUTES));
-            order.addItem(stock.getProductId(), "상품", new BigDecimal("1000"), quantity);
-            StockReservation.create(stock, order, quantity, order.getExpireAt());
-            ReflectionTestUtils.setField(order, "id", orderId);
-            return order;
-        }
-
         @Test
         @DisplayName("PENDING 주문을 취소하면 CANCELLED 로 바꾸고 잡아둔 재고를 돌려준다")
         void 취소_성공() {
@@ -397,6 +402,171 @@ class OrderServiceTest {
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
 
             assertThat(stock.getAvailableQuantity()).isEqualTo(7);
+        }
+
+        @Test
+        @DisplayName("결제에 실패한 주문은 ORDER_PAYMENT_FAILED 로 실패한다 - 재고는 이미 돌려주었다")
+        void 결제_실패함() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3);
+            ReflectionTestUtils.setField(order, "orderStatus", OrderStatus.PAYMENT_FAILED);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            assertThatThrownBy(() -> orderService.cancelOrder(1L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_PAYMENT_FAILED);
+
+            assertThat(stock.getAvailableQuantity()).isEqualTo(7);
+        }
+    }
+
+    @Nested
+    @DisplayName("confirmOrder")
+    class ConfirmOrder {
+
+        @Test
+        @DisplayName("결제에 성공하면 CONFIRMED 로 바꾸고 예약한 수량만큼 총 재고를 차감한다")
+        void 확정_성공() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            orderService.confirmOrder(1L);
+
+            assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.CONFIRMED);
+            assertThat(order.getConfirmedAt()).isNotNull();
+            assertThat(order.getCancelledAt()).isNull();
+
+            // 가용 수량은 예약 시점에 이미 빠졌으므로 그대로이고, 총 재고가 따라 내려온다
+            assertThat(stock.getQuantity()).isEqualTo(7);
+            assertThat(stock.getAvailableQuantity()).isEqualTo(7);
+            assertThat(stock.reservedQuantity()).isZero();
+            assertThat(order.getReservations())
+                .allMatch(reservation -> reservation.getReservationStatus() == ReservationStatus.CONFIRMED);
+        }
+
+        @Test
+        @DisplayName("주문이 없으면 ORDER_NOT_FOUND 로 실패한다")
+        void 주문_없음() {
+            given(orderRepository.findById(99L)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> orderService.confirmOrder(99L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
+        }
+
+        @Test
+        @DisplayName("이미 확정된 주문은 ORDER_ALREADY_CONFIRMED 로 실패하고 재고를 다시 차감하지 않는다")
+        void 이미_확정됨() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3);
+            ReflectionTestUtils.setField(order, "orderStatus", OrderStatus.CONFIRMED);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            assertThatThrownBy(() -> orderService.confirmOrder(1L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
+
+            assertThat(stock.getQuantity()).isEqualTo(10);
+        }
+
+        @Test
+        @DisplayName("결제에 실패한 주문은 ORDER_PAYMENT_FAILED 로 실패한다")
+        void 결제_실패함() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3);
+            ReflectionTestUtils.setField(order, "orderStatus", OrderStatus.PAYMENT_FAILED);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            assertThatThrownBy(() -> orderService.confirmOrder(1L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_PAYMENT_FAILED);
+
+            assertThat(stock.getQuantity()).isEqualTo(10);
+        }
+
+        // 만료 스케줄러가 아직 돌지 않아 주문은 PENDING 이지만 예약의 결제 마감은 지난 경우
+        @Test
+        @DisplayName("결제 마감이 지난 예약은 RESERVATION_EXPIRED 로 실패하고 총 재고를 차감하지 않는다")
+        void 결제_마감_지남() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3, LocalDateTime.now().minusMinutes(1));
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            assertThatThrownBy(() -> orderService.confirmOrder(1L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ReservationErrorCode.RESERVATION_EXPIRED);
+
+            assertThat(stock.getQuantity()).isEqualTo(10);
+        }
+    }
+
+    @Nested
+    @DisplayName("failPayment")
+    class FailPayment {
+
+        @Test
+        @DisplayName("결제에 실패하면 PAYMENT_FAILED 로 바꾸고 예약한 재고를 돌려준다")
+        void 실패_반영_성공() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            orderService.failPayment(1L);
+
+            assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+            assertThat(order.getCancelledAt()).isNotNull();
+            assertThat(order.getConfirmedAt()).isNull();
+
+            assertThat(stock.getQuantity()).isEqualTo(10);
+            assertThat(stock.getAvailableQuantity()).isEqualTo(10);
+            assertThat(order.getReservations())
+                .allMatch(reservation -> reservation.getReservationStatus() == ReservationStatus.CANCELLED);
+        }
+
+        @Test
+        @DisplayName("주문이 없으면 ORDER_NOT_FOUND 로 실패한다")
+        void 주문_없음() {
+            given(orderRepository.findById(99L)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> orderService.failPayment(99L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
+        }
+
+        @Test
+        @DisplayName("이미 확정된 주문은 ORDER_ALREADY_CONFIRMED 로 실패하고 재고를 돌려주지 않는다")
+        void 이미_확정됨() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3);
+            ReflectionTestUtils.setField(order, "orderStatus", OrderStatus.CONFIRMED);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            assertThatThrownBy(() -> orderService.failPayment(1L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
+
+            assertThat(stock.getAvailableQuantity()).isEqualTo(7);
+        }
+
+        @Test
+        @DisplayName("결제 마감이 지난 주문이어도 아직 PENDING 이면 재고를 돌려준다")
+        void 결제_마감_지남() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3, LocalDateTime.now().minusMinutes(1));
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            orderService.failPayment(1L);
+
+            assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+            assertThat(stock.getAvailableQuantity()).isEqualTo(10);
         }
     }
 

@@ -87,6 +87,18 @@ public class OrderService {
         // 추후 작업 부분
     }
 
+    // 결제 성공 - 예약을 확정하고 주문을 확정한다
+    @Transactional
+    public void confirmOrder(long orderId) {
+        getOrder(orderId).confirm();
+    }
+
+    // 결제 실패 - 예약을 해제해 재고를 복원한다
+    @Transactional
+    public void failPayment(long orderId) {
+        getOrder(orderId).failPayment();
+    }
+
     private Order getOrder(long orderId) {
         return orderRepository.findById(orderId)
             .orElseThrow(OrderErrorCode.ORDER_NOT_FOUND::exception);

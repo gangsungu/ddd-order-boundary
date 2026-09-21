@@ -16,7 +16,6 @@ import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import org.springframework.cglib.core.Local;
 
 @Entity
 @Getter
@@ -73,27 +72,31 @@ public class StockReservation extends BaseEntity {
 
     // 사용자 주문 취소 - 재고 예약 해제 처리
     public void cancelByUser() {
-        checkCancellable();
+        release(ReservationStatus.CANCELLED);
+    }
 
-        this.reservationStatus = ReservationStatus.CANCELLED;
-        this.cancelledAt = LocalDateTime.now();
-
-        // Stock의 실제 재고 원복
-        this.stock.cancel(this.reservedQuantity);
+    // 결제 실패에 의한 주문 취소 - 재고 예약 해제 처리
+    // 재고 입장에서는 사용자 취소와 같은 해제라 CANCELLED 로 남긴다. 실패 사유는 주문 상태가 가진다
+    public void cancelByPaymentFailure() {
+        release(ReservationStatus.CANCELLED);
     }
 
     // 주문 만료에 의한 주문 취소 - 재고 예약 해제 처리
     public void cancelByExpiration() {
-        checkCancellable();
-        this.reservationStatus = ReservationStatus.EXPIRED;
-        this.cancelledAt = LocalDateTime.now();
-
-        // Stock의 실제 재고 원복
-        this.stock.cancel(this.reservedQuantity);
+        release(ReservationStatus.EXPIRED);
     }
 
     public boolean isExpired() {
         return this.expireAt.isBefore(LocalDateTime.now());
+    }
+
+    private void release(ReservationStatus releasedStatus) {
+        checkCancellable();
+        this.reservationStatus = releasedStatus;
+        this.cancelledAt = LocalDateTime.now();
+
+        // Stock의 실제 재고 원복
+        this.stock.cancel(this.reservedQuantity);
     }
 
     // 재고 예약 해제 확인 - 이미 확정되었거나 해제된 예약을 다시 해제하면 가용수량이 중복 복원된다

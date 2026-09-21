@@ -80,11 +80,31 @@ public class Order extends BaseEntity {
     // 주문 취소
     // 점유한 재고 반환
     public void cancel() {
-        checkCancel();
+        checkPending();
         this.orderStatus = OrderStatus.CANCELLED;
         this.cancelledAt = LocalDateTime.now();
 
         reservations.forEach(StockReservation::cancelByUser);
+    }
+
+    // 결제 성공 - 주문 확정
+    // 예약을 확정해 총 재고를 차감한다
+    public void confirm() {
+        checkPending();
+        this.orderStatus = OrderStatus.CONFIRMED;
+        this.confirmedAt = LocalDateTime.now();
+
+        reservations.forEach(StockReservation::confirm);
+    }
+
+    // 결제 실패 - 보상 트랜잭션
+    // 점유한 재고 반환
+    public void failPayment() {
+        checkPending();
+        this.orderStatus = OrderStatus.PAYMENT_FAILED;
+        this.cancelledAt = LocalDateTime.now();
+
+        reservations.forEach(StockReservation::cancelByPaymentFailure);
     }
 
     // 주문 만료
@@ -97,9 +117,9 @@ public class Order extends BaseEntity {
         reservations.forEach(StockReservation::cancelByExpiration);
     }
 
-    // 취소는 결제 전 주문에서만 가능하다.
+    // 취소와 결제 결과 반영은 결제 대기 중인 주문에서만 가능하다.
     // 확정된 주문의 취소는 환불이라 결제 취소가 선행되어야 하고, 이는 섹션 3 범위다.
-    private void checkCancel() {
+    private void checkPending() {
         if(this.orderStatus == OrderStatus.CANCELLED) {
             throw OrderErrorCode.ORDER_ALREADY_CANCELLED.exception();
         }
@@ -110,6 +130,10 @@ public class Order extends BaseEntity {
 
         if(this.orderStatus == OrderStatus.CONFIRMED) {
             throw OrderErrorCode.ORDER_ALREADY_CONFIRMED.exception();
+        }
+
+        if(this.orderStatus == OrderStatus.PAYMENT_FAILED) {
+            throw OrderErrorCode.ORDER_PAYMENT_FAILED.exception();
         }
     }
 }
