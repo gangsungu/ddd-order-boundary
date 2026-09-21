@@ -41,6 +41,7 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -567,6 +568,102 @@ class OrderServiceTest {
 
             assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
             assertThat(stock.getAvailableQuantity()).isEqualTo(10);
+        }
+    }
+
+    @Nested
+    @DisplayName("findExpiredOrderIds")
+    class FindExpiredOrderIds {
+
+        @Test
+        @DisplayName("PENDING 주문 중 기준 시각 이전에 마감된 것을 요청한 수만큼 조회한다")
+        void 만료_대상_조회() {
+            LocalDateTime now = LocalDateTime.now();
+            given(orderRepository.findIdsByStatusAndExpireAtBefore(OrderStatus.PENDING, now, PageRequest.of(0, 100)))
+                .willReturn(List.of(3L, 1L));
+
+            List<Long> orderIds = orderService.findExpiredOrderIds(now, 100);
+
+            assertThat(orderIds).containsExactly(3L, 1L);
+        }
+    }
+
+    @Nested
+    @DisplayName("expireOrder")
+    class ExpireOrder {
+
+        @Test
+        @DisplayName("PENDING 주문을 EXPIRED 로 바꾸고 예약한 재고를 돌려준다")
+        void 만료_성공() {
+            LocalDateTime expireAt = LocalDateTime.now().minusMinutes(1);
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3, expireAt);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            orderService.expireOrder(1L);
+
+            assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.EXPIRED);
+            assertThat(order.getCancelledAt()).isNotNull();
+            assertThat(stock.getQuantity()).isEqualTo(10);
+            assertThat(stock.getAvailableQuantity()).isEqualTo(10);
+            assertThat(order.getReservations())
+                .allMatch(reservation -> reservation.getReservationStatus() == ReservationStatus.EXPIRED);
+        }
+
+        @Test
+        @DisplayName("만료해도 결제 마감 시각은 덮어쓰지 않는다")
+        void 마감_시각_유지() {
+            LocalDateTime expireAt = LocalDateTime.now().minusMinutes(1);
+            Order order = pendingOrder(1L, stock(10L, 1L, 10), 3, expireAt);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            orderService.expireOrder(1L);
+
+            assertThat(order.getExpireAt()).isEqualTo(expireAt);
+        }
+
+        @Test
+        @DisplayName("주문이 없으면 ORDER_NOT_FOUND 로 실패한다")
+        void 주문_없음() {
+            given(orderRepository.findById(99L)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> orderService.expireOrder(99L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
+        }
+
+        // 스케줄러가 ID 를 읽은 뒤 결제가 먼저 끝난 경우
+        @Test
+        @DisplayName("이미 확정된 주문은 ORDER_ALREADY_CONFIRMED 로 실패하고 재고를 돌려주지 않는다")
+        void 이미_확정됨() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3, LocalDateTime.now().minusMinutes(1));
+            ReflectionTestUtils.setField(order, "orderStatus", OrderStatus.CONFIRMED);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            assertThatThrownBy(() -> orderService.expireOrder(1L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
+
+            assertThat(stock.getAvailableQuantity()).isEqualTo(7);
+        }
+
+        @Test
+        @DisplayName("이미 취소된 주문은 ORDER_ALREADY_CANCELLED 로 실패하고 재고를 다시 돌려주지 않는다")
+        void 이미_취소됨() {
+            Stock stock = stock(10L, 1L, 10);
+            Order order = pendingOrder(1L, stock, 3, LocalDateTime.now().minusMinutes(1));
+            ReflectionTestUtils.setField(order, "orderStatus", OrderStatus.CANCELLED);
+            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
+
+            assertThatThrownBy(() -> orderService.expireOrder(1L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(OrderErrorCode.ORDER_ALREADY_CANCELLED);
+
+            assertThat(stock.getAvailableQuantity()).isEqualTo(7);
         }
     }
 
