@@ -8,9 +8,9 @@ import com.roykhan.dddorderboundary.order.application.port.out.ProductPort;
 import com.roykhan.dddorderboundary.order.application.port.out.ProductSnapshot;
 import com.roykhan.dddorderboundary.order.application.port.out.StockLine;
 import com.roykhan.dddorderboundary.order.application.port.out.StockPort;
-import com.roykhan.dddorderboundary.order.domain.exception.OrderErrorCode;
 import com.roykhan.dddorderboundary.order.domain.model.Order;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
+import com.roykhan.dddorderboundary.order.exception.out.OrderLookupErrorCode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -46,7 +46,7 @@ public class OrderApplicationService implements OrderUseCase {
             .collect(Collectors.toMap(ProductSnapshot::productId, Function.identity()));
 
         if(products.size() != productIds.size()) {
-            throw OrderErrorCode.INVALID_ORDER_ITEM.exception();
+            throw OrderLookupErrorCode.INVALID_ORDER_ITEM.exception();
         }
 
         // 주문 생성 - 항목마다 주문 시점의 상품명·단가를 복사해 담고 총액은 주문이 계산한다
@@ -123,6 +123,6 @@ public class OrderApplicationService implements OrderUseCase {
 
     private Order getOrder(long orderId) {
         return orderRepository.findById(orderId)
-            .orElseThrow(OrderErrorCode.ORDER_NOT_FOUND::exception);
+            .orElseThrow(OrderLookupErrorCode.ORDER_NOT_FOUND::exception);
     }
 }

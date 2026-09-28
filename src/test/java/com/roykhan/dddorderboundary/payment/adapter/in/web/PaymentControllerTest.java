@@ -10,7 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.roykhan.dddorderboundary.common.config.JacksonConfig;
-import com.roykhan.dddorderboundary.order.domain.exception.OrderErrorCode;
+import com.roykhan.dddorderboundary.order.exception.domain.OrderErrorCode;
 import com.roykhan.dddorderboundary.payment.application.port.in.PaymentUseCase;
 import com.roykhan.dddorderboundary.payment.domain.model.PaymentResult;
 import org.junit.jupiter.api.DisplayName;

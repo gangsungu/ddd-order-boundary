@@ -13,12 +13,13 @@ import com.roykhan.dddorderboundary.product.application.port.in.ReserveStockComm
 import com.roykhan.dddorderboundary.product.application.port.in.StockInfo;
 import com.roykhan.dddorderboundary.product.application.port.out.StockRepository;
 import com.roykhan.dddorderboundary.product.application.port.out.StockReservationRepository;
-import com.roykhan.dddorderboundary.product.domain.exception.ReservationErrorCode;
-import com.roykhan.dddorderboundary.product.domain.exception.StockErrorCode;
 import com.roykhan.dddorderboundary.product.domain.model.ReservationStatus;
 import com.roykhan.dddorderboundary.product.domain.model.Stock;
 import com.roykhan.dddorderboundary.product.domain.model.StockReservation;
 import com.roykhan.dddorderboundary.product.domain.model.StockStatus;
+import com.roykhan.dddorderboundary.product.exception.domain.ReservationErrorCode;
+import com.roykhan.dddorderboundary.product.exception.domain.StockErrorCode;
+import com.roykhan.dddorderboundary.product.exception.out.ProductLookupErrorCode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -120,9 +121,9 @@ class StockApplicationServiceTest {
 
             assertThatThrownBy(() -> stockService.findByProductId(99L))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage(StockErrorCode.STOCK_NOT_FOUND.getMessage())
+                .hasMessage(ProductLookupErrorCode.STOCK_NOT_FOUND.getMessage())
                 .extracting("errorCode")
-                .isEqualTo(StockErrorCode.STOCK_NOT_FOUND);
+                .isEqualTo(ProductLookupErrorCode.STOCK_NOT_FOUND);
         }
     }
 
@@ -175,7 +176,7 @@ class StockApplicationServiceTest {
             assertThatThrownBy(() -> stockService.reserve(reserveCommand(42L, LATER, line(99L, 1))))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
-                .isEqualTo(StockErrorCode.STOCK_NOT_FOUND);
+                .isEqualTo(ProductLookupErrorCode.STOCK_NOT_FOUND);
 
             verify(stockReservationRepository, never()).save(any());
         }

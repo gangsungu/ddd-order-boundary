@@ -14,9 +14,10 @@ import com.roykhan.dddorderboundary.product.application.port.in.RegisterProductC
 import com.roykhan.dddorderboundary.product.application.port.in.UpdateProductCommand;
 import com.roykhan.dddorderboundary.product.application.port.out.ProductRepository;
 import com.roykhan.dddorderboundary.product.application.port.out.StockRepository;
-import com.roykhan.dddorderboundary.product.domain.exception.ProductErrorCode;
 import com.roykhan.dddorderboundary.product.domain.model.Product;
 import com.roykhan.dddorderboundary.product.domain.model.Stock;
+import com.roykhan.dddorderboundary.product.exception.in.ProductErrorCode;
+import com.roykhan.dddorderboundary.product.exception.out.ProductLookupErrorCode;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
@@ -103,9 +104,9 @@ class ProductApplicationServiceTest {
 
             assertThatThrownBy(() -> productService.findById(99L))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage(ProductErrorCode.PRODUCT_NOT_FOUND.getMessage())
+                .hasMessage(ProductLookupErrorCode.PRODUCT_NOT_FOUND.getMessage())
                 .extracting("errorCode")
-                .isEqualTo(ProductErrorCode.PRODUCT_NOT_FOUND);
+                .isEqualTo(ProductLookupErrorCode.PRODUCT_NOT_FOUND);
         }
     }
 
@@ -202,9 +203,9 @@ class ProductApplicationServiceTest {
 
             assertThatThrownBy(() -> productService.update(99L, updateCommand("새 이름", "새 설명", "1")))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage(ProductErrorCode.PRODUCT_NOT_FOUND.getMessage())
+                .hasMessage(ProductLookupErrorCode.PRODUCT_NOT_FOUND.getMessage())
                 .extracting("errorCode")
-                .isEqualTo(ProductErrorCode.PRODUCT_NOT_FOUND);
+                .isEqualTo(ProductLookupErrorCode.PRODUCT_NOT_FOUND);
         }
     }
 
@@ -229,9 +230,9 @@ class ProductApplicationServiceTest {
 
             assertThatThrownBy(() -> productService.delete(99L))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage(ProductErrorCode.PRODUCT_NOT_FOUND.getMessage())
+                .hasMessage(ProductLookupErrorCode.PRODUCT_NOT_FOUND.getMessage())
                 .extracting("errorCode")
-                .isEqualTo(ProductErrorCode.PRODUCT_NOT_FOUND);
+                .isEqualTo(ProductLookupErrorCode.PRODUCT_NOT_FOUND);
 
             verify(productRepository, never()).deleteById(anyLong());
         }

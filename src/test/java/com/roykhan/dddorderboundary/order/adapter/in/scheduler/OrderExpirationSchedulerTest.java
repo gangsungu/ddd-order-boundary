@@ -9,7 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.roykhan.dddorderboundary.order.application.port.in.OrderUseCase;
-import com.roykhan.dddorderboundary.order.domain.exception.OrderErrorCode;
+import com.roykhan.dddorderboundary.order.exception.domain.OrderErrorCode;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;

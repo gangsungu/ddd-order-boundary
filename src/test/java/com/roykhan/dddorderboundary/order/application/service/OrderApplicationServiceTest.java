@@ -20,12 +20,14 @@ import com.roykhan.dddorderboundary.order.application.port.out.ProductPort;
 import com.roykhan.dddorderboundary.order.application.port.out.ProductSnapshot;
 import com.roykhan.dddorderboundary.order.application.port.out.StockLine;
 import com.roykhan.dddorderboundary.order.application.port.out.StockPort;
-import com.roykhan.dddorderboundary.order.domain.exception.OrderErrorCode;
 import com.roykhan.dddorderboundary.order.domain.model.Order;
 import com.roykhan.dddorderboundary.order.domain.model.OrderItem;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
-import com.roykhan.dddorderboundary.product.domain.exception.ReservationErrorCode;
-import com.roykhan.dddorderboundary.product.domain.exception.StockErrorCode;
+import com.roykhan.dddorderboundary.order.exception.domain.OrderErrorCode;
+import com.roykhan.dddorderboundary.order.exception.out.OrderLookupErrorCode;
+import com.roykhan.dddorderboundary.product.exception.domain.ReservationErrorCode;
+import com.roykhan.dddorderboundary.product.exception.domain.StockErrorCode;
+import com.roykhan.dddorderboundary.product.exception.out.ProductLookupErrorCode;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -243,9 +245,9 @@ class OrderApplicationServiceTest {
 
             assertThatThrownBy(() -> orderService.createOrder(command(1L, line(1L, 1), line(9999L, 1))))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage(OrderErrorCode.INVALID_ORDER_ITEM.getMessage())
+                .hasMessage(OrderLookupErrorCode.INVALID_ORDER_ITEM.getMessage())
                 .extracting("errorCode")
-                .isEqualTo(OrderErrorCode.INVALID_ORDER_ITEM);
+                .isEqualTo(OrderLookupErrorCode.INVALID_ORDER_ITEM);
 
             verify(orderRepository, never()).save(any());
             verifyNoInteractions(stockPort);
@@ -257,12 +259,12 @@ class OrderApplicationServiceTest {
         void 재고_레코드_없음() {
             given(productPort.findAll(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
             givenOrderSaveAssignsId(1L);
-            doThrow(StockErrorCode.STOCK_NOT_FOUND.exception()).when(stockPort).reserve(anyLong(), anyList(), any());
+            doThrow(ProductLookupErrorCode.STOCK_NOT_FOUND.exception()).when(stockPort).reserve(anyLong(), anyList(), any());
 
             assertThatThrownBy(() -> orderService.createOrder(command(1L, line(1L, 1))))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
-                .isEqualTo(StockErrorCode.STOCK_NOT_FOUND);
+                .isEqualTo(ProductLookupErrorCode.STOCK_NOT_FOUND);
         }
 
         @Test
@@ -303,9 +305,9 @@ class OrderApplicationServiceTest {
 
             assertThatThrownBy(() -> orderService.cancelOrder(99L))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage(OrderErrorCode.ORDER_NOT_FOUND.getMessage())
+                .hasMessage(OrderLookupErrorCode.ORDER_NOT_FOUND.getMessage())
                 .extracting("errorCode")
-                .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
+                .isEqualTo(OrderLookupErrorCode.ORDER_NOT_FOUND);
 
             verifyNoInteractions(stockPort);
         }
@@ -392,7 +394,7 @@ class OrderApplicationServiceTest {
             assertThatThrownBy(() -> orderService.confirmOrder(99L))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
-                .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
+                .isEqualTo(OrderLookupErrorCode.ORDER_NOT_FOUND);
 
             verifyNoInteractions(stockPort);
         }
@@ -464,7 +466,7 @@ class OrderApplicationServiceTest {
             assertThatThrownBy(() -> orderService.failPayment(99L))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
-                .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
+                .isEqualTo(OrderLookupErrorCode.ORDER_NOT_FOUND);
 
             verifyNoInteractions(stockPort);
         }
@@ -549,7 +551,7 @@ class OrderApplicationServiceTest {
             assertThatThrownBy(() -> orderService.expireOrder(99L))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
-                .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
+                .isEqualTo(OrderLookupErrorCode.ORDER_NOT_FOUND);
 
             verifyNoInteractions(stockPort);
         }
@@ -616,9 +618,9 @@ class OrderApplicationServiceTest {
 
             assertThatThrownBy(() -> orderService.findById(99L))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage(OrderErrorCode.ORDER_NOT_FOUND.getMessage())
+                .hasMessage(OrderLookupErrorCode.ORDER_NOT_FOUND.getMessage())
                 .extracting("errorCode")
-                .isEqualTo(OrderErrorCode.ORDER_NOT_FOUND);
+                .isEqualTo(OrderLookupErrorCode.ORDER_NOT_FOUND);
         }
     }
 }

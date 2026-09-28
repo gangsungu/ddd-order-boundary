@@ -6,9 +6,10 @@ import com.roykhan.dddorderboundary.product.application.port.in.RegisterProductC
 import com.roykhan.dddorderboundary.product.application.port.in.UpdateProductCommand;
 import com.roykhan.dddorderboundary.product.application.port.out.ProductRepository;
 import com.roykhan.dddorderboundary.product.application.port.out.StockRepository;
-import com.roykhan.dddorderboundary.product.domain.exception.ProductErrorCode;
 import com.roykhan.dddorderboundary.product.domain.model.Product;
 import com.roykhan.dddorderboundary.product.domain.model.Stock;
+import com.roykhan.dddorderboundary.product.exception.in.ProductErrorCode;
+import com.roykhan.dddorderboundary.product.exception.out.ProductLookupErrorCode;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -64,7 +65,7 @@ public class ProductApplicationService implements ProductUseCase {
     @Transactional
     public void delete(Long id) {
         if(!productRepository.existsById(id)) {
-            throw ProductErrorCode.PRODUCT_NOT_FOUND.exception();
+            throw ProductLookupErrorCode.PRODUCT_NOT_FOUND.exception();
         }
 
         productRepository.deleteById(id);
@@ -72,7 +73,7 @@ public class ProductApplicationService implements ProductUseCase {
 
     private Product getProduct(Long id) {
         return productRepository.findById(id)
-            .orElseThrow(ProductErrorCode.PRODUCT_NOT_FOUND::exception);
+            .orElseThrow(ProductLookupErrorCode.PRODUCT_NOT_FOUND::exception);
     }
 
     private void checkDuplicate(String name) {
