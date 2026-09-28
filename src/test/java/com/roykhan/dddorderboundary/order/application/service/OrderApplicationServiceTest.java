@@ -25,9 +25,7 @@ import com.roykhan.dddorderboundary.order.domain.model.OrderItem;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
 import com.roykhan.dddorderboundary.order.exception.domain.OrderErrorCode;
 import com.roykhan.dddorderboundary.order.exception.out.OrderLookupErrorCode;
-import com.roykhan.dddorderboundary.product.exception.domain.ReservationErrorCode;
-import com.roykhan.dddorderboundary.product.exception.domain.StockErrorCode;
-import com.roykhan.dddorderboundary.product.exception.out.ProductLookupErrorCode;
+import com.roykhan.dddorderboundary.order.exception.out.StockPortErrorCode;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -255,29 +253,29 @@ class OrderApplicationServiceTest {
 
         // 재고 레코드의 존재는 재고 컨텍스트가 예약하면서 확인한다
         @Test
-        @DisplayName("재고 레코드가 없으면 예약 단계의 STOCK_NOT_FOUND 가 그대로 전파된다")
+        @DisplayName("재고 레코드가 없으면 재고 포트가 주문 언어의 ORDER_ITEM_NOT_ORDERABLE 로 알린다")
         void 재고_레코드_없음() {
             given(productPort.findAll(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
             givenOrderSaveAssignsId(1L);
-            doThrow(ProductLookupErrorCode.STOCK_NOT_FOUND.exception()).when(stockPort).reserve(anyLong(), anyList(), any());
+            doThrow(StockPortErrorCode.ORDER_ITEM_NOT_ORDERABLE.exception()).when(stockPort).reserve(anyLong(), anyList(), any());
 
             assertThatThrownBy(() -> orderService.createOrder(command(1L, line(1L, 1))))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
-                .isEqualTo(ProductLookupErrorCode.STOCK_NOT_FOUND);
+                .isEqualTo(StockPortErrorCode.ORDER_ITEM_NOT_ORDERABLE);
         }
 
         @Test
-        @DisplayName("재고가 부족하면 예약 단계의 OUT_OF_STOCK 이 그대로 전파된다")
+        @DisplayName("재고가 부족하면 재고 포트가 주문 언어의 STOCK_NOT_ENOUGH 로 알린다")
         void 재고_부족_전파() {
             given(productPort.findAll(List.of(1L))).willReturn(List.of(product(1L, "상품1", "1000")));
             givenOrderSaveAssignsId(1L);
-            doThrow(StockErrorCode.OUT_OF_STOCK.exception()).when(stockPort).reserve(anyLong(), anyList(), any());
+            doThrow(StockPortErrorCode.STOCK_NOT_ENOUGH.exception()).when(stockPort).reserve(anyLong(), anyList(), any());
 
             assertThatThrownBy(() -> orderService.createOrder(command(1L, line(1L, 5))))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
-                .isEqualTo(StockErrorCode.OUT_OF_STOCK);
+                .isEqualTo(StockPortErrorCode.STOCK_NOT_ENOUGH);
         }
     }
 
@@ -428,15 +426,15 @@ class OrderApplicationServiceTest {
         // 만료 스케줄러가 아직 돌지 않아 주문은 PENDING 이지만 예약의 결제 마감은 지난 경우.
         // 예외가 트랜잭션을 되돌리므로 주문의 CONFIRMED 전이도 함께 취소된다
         @Test
-        @DisplayName("예약 확정이 RESERVATION_EXPIRED 로 거절되면 그대로 전파한다")
+        @DisplayName("예약 확정이 마감으로 거절되면 STOCK_RESERVATION_EXPIRED 로 올라온다")
         void 결제_마감_지남() {
             given(orderRepository.findById(1L)).willReturn(Optional.of(pendingOrder(1L)));
-            doThrow(ReservationErrorCode.RESERVATION_EXPIRED.exception()).when(stockPort).confirm(1L);
+            doThrow(StockPortErrorCode.STOCK_RESERVATION_EXPIRED.exception()).when(stockPort).confirm(1L);
 
             assertThatThrownBy(() -> orderService.confirmOrder(1L))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
-                .isEqualTo(ReservationErrorCode.RESERVATION_EXPIRED);
+                .isEqualTo(StockPortErrorCode.STOCK_RESERVATION_EXPIRED);
         }
     }
 
