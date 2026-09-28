@@ -1,7 +1,7 @@
 package com.roykhan.dddorderboundary.product.domain.model;
 
 import com.roykhan.dddorderboundary.common.domain.BaseEntity;
-import com.roykhan.dddorderboundary.product.domain.exception.StockErrorCode;
+import com.roykhan.dddorderboundary.product.exception.domain.StockErrorCode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;

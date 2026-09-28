@@ -1,7 +1,7 @@
 package com.roykhan.dddorderboundary.order.domain.model;
 
 import com.roykhan.dddorderboundary.common.domain.BaseEntity;
-import com.roykhan.dddorderboundary.order.domain.exception.OrderErrorCode;
+import com.roykhan.dddorderboundary.order.exception.domain.OrderErrorCode;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

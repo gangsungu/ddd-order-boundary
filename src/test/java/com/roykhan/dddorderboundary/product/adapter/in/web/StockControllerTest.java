@@ -8,8 +8,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.roykhan.dddorderboundary.common.config.JacksonConfig;
 import com.roykhan.dddorderboundary.product.application.port.in.StockInfo;
 import com.roykhan.dddorderboundary.product.application.port.in.StockUseCase;
-import com.roykhan.dddorderboundary.product.domain.exception.StockErrorCode;
 import com.roykhan.dddorderboundary.product.domain.model.StockStatus;
+import com.roykhan.dddorderboundary.product.exception.out.ProductLookupErrorCode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,7 +49,7 @@ class StockControllerTest {
     @Test
     @DisplayName("GET /api/product/{productId}/stock - 재고가 없으면 404 STOCK_NOT_FOUND 로 실패한다")
     void 재고_없음() throws Exception {
-        given(stockUseCase.findByProductId(99L)).willThrow(StockErrorCode.STOCK_NOT_FOUND.exception());
+        given(stockUseCase.findByProductId(99L)).willThrow(ProductLookupErrorCode.STOCK_NOT_FOUND.exception());
 
         mockMvc.perform(get("/api/product/{productId}/stock", 99L))
             .andExpect(status().isNotFound())

@@ -93,12 +93,14 @@ src/main/java/com/roykhan/dddorderboundary
 │       ├── ApiResponse.java             # 모든 응답의 공통 규격
 │       └── ApiResponseSerializer.java   # 성공 시 data 생략, 실패 시 유지
 ├── order                                # 주문 컨텍스트
+│   ├── exception                        # 발생 지점별로 모은 예외
+│   │   ├── domain/OrderErrorCode.java   # 주문 애그리거트가 자기 상태만 보고 거절
+│   │   └── out/OrderLookupErrorCode.java    # 출력 포트가 "없다"고 답함 (주문·상품 조회 실패)
 │   ├── domain
-│   │   ├── model
-│   │   │   ├── Order.java               # 주문 애그리거트 루트 — 상태 전이와 총액 계산
-│   │   │   ├── OrderItem.java           # 주문 시점 상품명·단가 스냅샷
-│   │   │   └── OrderStatus.java
-│   │   └── exception/OrderErrorCode.java
+│   │   └── model
+│   │       ├── Order.java               # 주문 애그리거트 루트 — 상태 전이와 총액 계산
+│   │       ├── OrderItem.java           # 주문 시점 상품명·단가 스냅샷
+│   │       └── OrderStatus.java
 │   ├── application
 │   │   ├── port
 │   │   │   ├── in                       # 입력 포트 — 컨트롤러·스케줄러·결제가 이것으로 들어온다
@@ -124,17 +126,19 @@ src/main/java/com/roykhan/dddorderboundary
 │               ├── ProductAdapter.java
 │               └── StockAdapter.java
 ├── product                              # 상품 컨텍스트 — 상품과 재고
+│   ├── exception                        # 발생 지점별로 모은 예외
+│   │   ├── domain
+│   │   │   ├── StockErrorCode.java      # 재고 애그리거트가 자기 수량만 보고 거절
+│   │   │   └── ReservationErrorCode.java    # 예약 애그리거트가 자기 상태만 보고 거절
+│   │   ├── in/ProductErrorCode.java     # 들어온 요청을 유스케이스가 거절 (이미 등록된 상품)
+│   │   └── out/ProductLookupErrorCode.java  # 출력 포트가 "없다"고 답함 (상품·재고 조회 실패)
 │   ├── domain
-│   │   ├── model
-│   │   │   ├── Product.java             # 상품명, 설명, 가격
-│   │   │   ├── Stock.java               # 총 재고와 가용 수량, 낙관적 락
-│   │   │   ├── StockReservation.java    # 예약 주체(주문 ID)·수량·만료 시각
-│   │   │   ├── StockStatus.java
-│   │   │   └── ReservationStatus.java
-│   │   └── exception
-│   │       ├── ProductErrorCode.java
-│   │       ├── StockErrorCode.java
-│   │       └── ReservationErrorCode.java
+│   │   └── model
+│   │       ├── Product.java             # 상품명, 설명, 가격
+│   │       ├── Stock.java               # 총 재고와 가용 수량, 낙관적 락
+│   │       ├── StockReservation.java    # 예약 주체(주문 ID)·수량·만료 시각
+│   │       ├── StockStatus.java
+│   │       └── ReservationStatus.java
 │   ├── application
 │   │   ├── port
 │   │   │   ├── in                       # 입력 포트 — 컨텍스트 바깥은 이것으로만 들어온다
@@ -355,12 +359,13 @@ OrderApplicationService.confirmOrder(orderId)
 
 | 위치 | 역할 | 예 (주문 컨텍스트) |
 |---|---|---|
-| `domain` | 모델과 규칙, 에러 코드 | `model/Order`, `exception/OrderErrorCode` |
+| `domain` | 모델과 규칙 | `model/Order` |
 | `application/port/in` | 입력 포트(유스케이스)와 그 커맨드·결과 | `OrderUseCase`, `CreateOrderCommand`, `OrderInfo` |
 | `application/port/out` | 출력 포트와 그 타입 — 저장소, 다른 컨텍스트 | `OrderRepository`, `ProductPort`, `StockPort` |
 | `application/service` | 입력 포트 구현 — 출력 포트를 써서 유스케이스를 수행 | `OrderApplicationService` |
 | `adapter/in` | 입력 어댑터 — 웹, 스케줄러 | `web/OrderController`, `scheduler/OrderExpirationScheduler` |
 | `adapter/out` | 출력 어댑터 — JPA, 다른 컨텍스트 호출 | `persistence/OrderRepositoryAdapter`, `product/StockAdapter` |
+| `exception` | 예외를 발생 지점별로 모은다 — 애그리거트(`domain`) · 요청 거절(`in`) · 출력 포트의 답(`out`) | `domain/OrderErrorCode`, `out/OrderLookupErrorCode` |
 
 - 의존은 `adapter` → `application` → `domain` 한 방향으로만 향합니다. `adapter/in` 은 입력 포트를 부르고, `adapter/out` 은 출력 포트를 구현합니다.
 - 포트가 주고받는 타입은 포트 옆에 둡니다. 커맨드와 조회 결과는 `port/in`, `ProductSnapshot` · `StockLine` 은 `port/out` 에 있습니다.
@@ -517,9 +522,10 @@ PaymentApplicationService
       스케줄러는 주문의 마감을, 결제 확정은 예약의 마감을 본다. 지금은 생성 시 같은 값을 넣어 어긋나지 않을 뿐이다
 - [x] `Product` 엔티티의 클래스 레벨 `@Setter` 제거 — 도메인 모델을 분리할 때 가장 먼저 걸리는 지점
       수정은 `Product.update()` 로만 한다. 기본 생성자도 JPA 용으로 `protected` 로 좁혔다
-- [x] 도메인별 에러 코드를 각 도메인 패키지로 이동 (`ProductErrorCode` / `OrderErrorCode` / `StockErrorCode` / `ReservationErrorCode`)
-      `order/domain/exception`, `product/domain/exception` 으로 옮겼다. 공통 계약(`BaseErrorCode`)과 공통 코드만 `common/exception` 에 남는다
-- [ ] 도메인 에러 코드에서 `HttpStatus` 걷어내기 — 에러 코드는 종류만 갖고 HTTP 상태 변환은 웹 어댑터가 맡는다 ([한계로 남긴 이유](docs/섹션2/핵심-도메인이-외부-기술에-직접-의존하지-않도록-구조-개선.md#2-에러-코드의-http-상태--한계로-남김))
+- [x] 에러 코드를 컨텍스트 바로 아래 `exception` 패키지로 모으고 발생 지점별로 나눔 (`domain` / `in` / `out`) — 섹션 2 코드리뷰 피드백
+      애그리거트가 자기 상태만 보고 거절하면 `exception/domain`, 출력 포트가 "없다"고 답하면 `exception/out`, 들어온 요청을 유스케이스가 거절하면 `exception/in` 이다.
+      공통 계약(`BaseErrorCode`)과 공통 코드만 `common/exception` 에 남는다. 빈 `exception/persistence` 는 낙관적 락 변환을 할 때 생긴다
+- [ ] 에러 코드에서 `HttpStatus` 걷어내기 — 에러 코드는 종류만 갖고 HTTP 상태 변환은 웹 어댑터가 맡는다 ([한계로 남긴 이유](docs/섹션2/핵심-도메인이-외부-기술에-직접-의존하지-않도록-구조-개선.md#2-에러-코드의-http-상태--한계로-남김))
 - [ ] `common` 의 웹 코드(`HealthController` · `GlobalExceptionHandler` · `ApiResponse`)를 `adapter/in/web` 으로 — 위 항목과 함께
 - [ ] *(트레이드오프로 보류)* 도메인 모델에서 JPA 분리 — 섹션 3 에서 컨텍스트를 서비스로 떼어 낼 때 다시 판단 ([남긴 이유](docs/섹션2/핵심-도메인이-외부-기술에-직접-의존하지-않도록-구조-개선.md#1-도메인-모델의-jpa-애너테이션--의도한-트레이드오프))
 

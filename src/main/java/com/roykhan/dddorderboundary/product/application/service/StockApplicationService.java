@@ -5,9 +5,9 @@ import com.roykhan.dddorderboundary.product.application.port.in.StockInfo;
 import com.roykhan.dddorderboundary.product.application.port.in.StockUseCase;
 import com.roykhan.dddorderboundary.product.application.port.out.StockRepository;
 import com.roykhan.dddorderboundary.product.application.port.out.StockReservationRepository;
-import com.roykhan.dddorderboundary.product.domain.exception.StockErrorCode;
 import com.roykhan.dddorderboundary.product.domain.model.Stock;
 import com.roykhan.dddorderboundary.product.domain.model.StockReservation;
+import com.roykhan.dddorderboundary.product.exception.out.ProductLookupErrorCode;
 import java.util.List;
 import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
@@ -58,7 +58,7 @@ public class StockApplicationService implements StockUseCase {
 
     private Stock getStock(Long productId) {
         return stockRepository.findByProductId(productId)
-            .orElseThrow(StockErrorCode.STOCK_NOT_FOUND::exception);
+            .orElseThrow(ProductLookupErrorCode.STOCK_NOT_FOUND::exception);
     }
 
     private void forEachReservation(Long orderId, Consumer<StockReservation> action) {

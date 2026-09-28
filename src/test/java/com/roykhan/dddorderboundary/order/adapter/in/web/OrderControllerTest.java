@@ -16,8 +16,9 @@ import com.roykhan.dddorderboundary.common.config.JacksonConfig;
 import com.roykhan.dddorderboundary.order.application.port.in.CreateOrderCommand;
 import com.roykhan.dddorderboundary.order.application.port.in.OrderInfo;
 import com.roykhan.dddorderboundary.order.application.port.in.OrderUseCase;
-import com.roykhan.dddorderboundary.order.domain.exception.OrderErrorCode;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
+import com.roykhan.dddorderboundary.order.exception.domain.OrderErrorCode;
+import com.roykhan.dddorderboundary.order.exception.out.OrderLookupErrorCode;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -124,7 +125,7 @@ class OrderControllerTest {
     @Test
     @DisplayName("GET /api/order/{orderId} - 주문이 없으면 404 ORDER_NOT_FOUND 로 실패한다")
     void 주문_없음() throws Exception {
-        given(orderUseCase.findById(99L)).willThrow(OrderErrorCode.ORDER_NOT_FOUND.exception());
+        given(orderUseCase.findById(99L)).willThrow(OrderLookupErrorCode.ORDER_NOT_FOUND.exception());
 
         mockMvc.perform(get("/api/order/{orderId}", 99L))
             .andExpect(status().isNotFound())
