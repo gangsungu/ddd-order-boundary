@@ -16,7 +16,7 @@
 | 3 | 분산 시스템 설계 (CQRS, Event-Driven, ACL, Saga) | |
 | 4 | Kafka & gRPC 실습 | |
 
-현재 진행 상황: **섹션 2** — 주문 생성·조회·취소, 재고 예약, 목업 결제, 재고 조회, 예약 만료 스케줄러를 구현하고 세 컨텍스트 모두 헥사고날(Ports & Adapters) 구조로 전환했습니다 ([전환 기록](#헥사고날-전환-계획)). DB 도 컨텍스트마다 자기 스키마를 갖도록 나눴습니다 ([스키마 분리](#컨텍스트별-스키마-분리)). 남은 것은 [정리 대상](#정리-대상)입니다
+현재 진행 상황: **섹션 3** — 세 컨텍스트를 헥사고날(Ports & Adapters) 구조로 옮기고 DB 도 컨텍스트마다 자기 스키마를 갖도록 나눈 뒤([섹션 2 기록](#헥사고날-전환-계획)), 지금은 CQRS · Event-Driven · ACL 을 적용하고 있습니다 ([작업 순서](#섹션-3-작업-순서))
 
 ---
 
@@ -95,7 +95,9 @@ src/main/java/com/roykhan/dddorderboundary
 ├── order                                # 주문 컨텍스트
 │   ├── exception                        # 발생 지점별로 모은 예외
 │   │   ├── domain/OrderErrorCode.java   # 주문 애그리거트가 자기 상태만 보고 거절
-│   │   └── out/OrderLookupErrorCode.java    # 출력 포트가 "없다"고 답함 (주문·상품 조회 실패)
+│   │   └── out
+│   │       ├── OrderLookupErrorCode.java    # 출력 포트가 "없다"고 답함 (주문·상품 조회 실패)
+│   │       └── StockPortErrorCode.java      # 재고 포트 실패를 주문의 언어로 (ACL 번역 결과)
 │   ├── domain
 │   │   └── model
 │   │       ├── Order.java               # 주문 애그리거트 루트 — 상태 전이와 총액 계산
@@ -124,7 +126,9 @@ src/main/java/com/roykhan/dddorderboundary
 │           │   └── OrderRepositoryAdapter.java / OrderJpaRepository.java
 │           └── product                  # 상품·재고 포트를 상품 컨텍스트의 유스케이스로 구현
 │               ├── ProductAdapter.java
-│               └── StockAdapter.java
+│               ├── StockAdapter.java
+│               └── acl
+│                   └── StockErrorTranslator.java  # ACL — 상품 컨텍스트의 예외를 주문의 언어로 번역
 ├── product                              # 상품 컨텍스트 — 상품과 재고
 │   ├── exception                        # 발생 지점별로 모은 예외
 │   │   ├── domain
@@ -484,8 +488,8 @@ PaymentApplicationService
 
 | 위치 | 지금 남은 의존 | 없애는 단계 |
 |---|---|---|
-| 재고 포트의 예외 | 상품 컨텍스트의 에러 코드(`OUT_OF_STOCK` · `RESERVATION_EXPIRED` 등)가 번역 없이 주문 API 응답까지 그대로 나간다 | 섹션 3 — ACL 에서 주문 쪽 의미로 번역 |
-| 주문 포트의 예외 | 결제 결과를 반영할 수 없는 주문이면 주문 컨텍스트의 에러 코드(`ORDER_ALREADY_CONFIRMED` 등)가 결제 API 응답으로 그대로 나간다 | 섹션 3 — ACL 에서 결제 쪽 의미로 번역 |
+| 재고 포트의 예외 | ~~상품 컨텍스트의 에러 코드(`OUT_OF_STOCK` · `RESERVATION_EXPIRED` 등)가 번역 없이 주문 API 응답까지 그대로 나간다~~ | **해결** — 섹션 3 1단계, `StockErrorTranslator` 가 주문의 언어로 번역한다 ([작업 순서](#섹션-3-작업-순서)) |
+| 주문 포트의 예외 | 결제 결과를 반영할 수 없는 주문이면 주문 컨텍스트의 에러 코드(`ORDER_ALREADY_CONFIRMED` 등)가 결제 API 응답으로 그대로 나간다 | 섹션 3 2단계 — 호출을 이벤트로 바꾸면서 주문의 입력 어댑터에서 번역 |
 
 - 저장소 인터페이스는 2단계부터 포트 자리에 두어, 상품·주문 컨텍스트에서 포트와 어댑터로 쪼갤 때 서비스 코드가 저장소 쪽으로 바뀌지 않았습니다. 6단계에서는 자리만 `domain/repository` → `application/port/out` 으로 옮겼습니다.
 - 서비스 이름은 유스케이스 인터페이스(입력 포트)를 들이는 단계에서 `*ApplicationService` 로 바꿨습니다. (상품 3단계, 주문 4단계, 결제 5단계)
@@ -543,11 +547,57 @@ PaymentApplicationService
       요청 → 커맨드 변환, 검증 실패, 조회 응답, 취소와 409 를 확인한다
 - [ ] 상품 목록 조회 엔드포인트 *(선택 — 주문 구현에는 불필요)*
 
-### 섹션 3 이후
+### 섹션 3 작업 순서
+
+미션은 CQRS · Event-Driven · ACL 을 적용하되 **각 패턴이 코드 구조에서 명확하게 구분되도록** 요구합니다. 셋을 따로 욱여넣는 대신 결제 흐름 하나로 엮었습니다.
+
+```
+결제 성공
+ └─ [EDA]  결제가 PaymentSucceeded 를 발행한다 — 주문을 직접 부르지 않는다
+     └─ [ACL] 주문의 입력 어댑터가 그 이벤트를 주문의 언어로 번역해 받는다
+         └─ 주문 확정 → OrderConfirmed 발행
+             └─ [CQRS] 그 이벤트로 주문 읽기 모델이 갱신된다
+```
+
+| 단계 | 내용 | 상태 |
+|---|---|---|
+| 1 | **ACL — 주문 → 상품** 재고 포트가 흘리던 상품 컨텍스트의 에러 코드를 주문의 언어로 번역한다 | 완료 |
+| 2 | **EDA — 결제 → 주문** 결제가 결과를 이벤트로 발행하고 주문이 입력 어댑터에서 번역해 받는다. `OrderAdapter` 제거 | |
+| 3 | **CQRS — 주문 읽기 모델** 주문 이벤트로 읽기 모델을 갱신하고 조회는 거기서 한다 | |
+| 4 | 적용한 패턴과 설계 의도를 README 와 `docs/섹션3` 에 정리 | |
+
+순서는 위험도 순입니다. ACL 은 앞뒤 의존이 없어 1단계에서 끝나지만, CQRS 읽기 모델은 2단계의 이벤트 위에 올라갑니다.
+
+ACL 을 결제 쪽이 아니라 **주문 → 상품 방향부터** 하는 이유는, 결제 쪽 `OrderAdapter` 가 2단계에서 이벤트 발행으로 바뀌며 사라지기 때문입니다. 거기에 먼저 번역을 넣으면 그대로 버려집니다. 주문 → 상품은 전환 뒤에도 동기 호출로 남습니다.
+
+먼저 정한 것
+
+- **이벤트 계약은 각 컨텍스트가 소유하고, 받는 쪽이 번역한다** — `common/event` 공유 커널로 두면 컨텍스트 결합이 남고 ACL 을 둘 근거가 사라진다
+- **전달은 스프링 인프로세스 이벤트**(`@TransactionalEventListener(AFTER_COMMIT)`) — 발행 어댑터만 갈아 끼우면 섹션 4 에서 Kafka 가 된다
+- **CQRS 는 읽기 모델까지** — 포트만 나누면 구조에서 구분되지 않는다. 대신 주문 직후 조회에 결과적 일관성이 생긴다
+
+#### 1단계 — ACL (주문 → 상품)
+
+`StockAdapter` 는 요청은 번역하면서(`StockLine` → `ReserveStockCommand`) 예외는 그대로 통과시켰습니다. 상품 컨텍스트의 코드가 주문 API 응답까지 그대로 나가던 것을 번역 계층으로 끊었습니다.
+
+| 상품 컨텍스트가 던지는 코드 | 주문이 받는 코드 |
+|---|---|
+| `OUT_OF_STOCK` | `STOCK_NOT_ENOUGH` |
+| `INVALID_QUANTITY` · `STOCK_NOT_FOUND` · `PRODUCT_NOT_FOUND` | `ORDER_ITEM_NOT_ORDERABLE` |
+| `RESERVATION_EXPIRED` | `STOCK_RESERVATION_EXPIRED` |
+| `RESERVATION_NOT_CONFIRMABLE` · `RESERVATION_NOT_CANCELLABLE` | `STOCK_RESERVATION_NOT_CHANGEABLE` |
+| 번역표에 없는 코드 | `STOCK_PORT_FAILED` — 원본 코드는 로그로만 남긴다 |
+
+- 번역기는 `order/adapter/out/product/acl/StockErrorTranslator` 하나이고, 주문의 코드는 `order/exception/out/StockPortErrorCode` 에 둡니다. 예외를 발생 지점별로 나눠둔 `exception/out` 이 그대로 번역 대상이 됐습니다
+- 번역표에 없는 코드까지 통과시키면 경계가 뚫리므로, 모르는 것은 주문 쪽 일반 실패로 덮습니다
+- `ProductAdapter` 는 번역할 예외가 없습니다. `findAllByIds` 는 찾은 것만 돌려주고, 빠진 항목의 판단은 주문 서비스가 `INVALID_ORDER_ITEM` 으로 합니다
+- 재고 포트를 목(mock)으로 세우는 주문 서비스 테스트도 이제 주문의 코드만 씁니다. 포트가 상품 컨텍스트의 코드를 던지는 일은 없습니다
+
+### 섹션 4 이후
 
 - 결제 · 정산 컨텍스트 — 목업 결제를 실제 PG 연동으로 교체하고 정산 배치 추가
-- CQRS, Event-Driven, ACL / Kafka, gRPC
-- 컨텍스트 사이 어댑터 셋(`ProductAdapter` · `StockAdapter` · `OrderAdapter`)을 네트워크·메시지 어댑터로 교체하고, 그에 맞춰 Saga 와 ACL 을 세운다 ([전환 후 컨텍스트 사이 호출](#전환-후-컨텍스트-사이-호출))
+- Kafka, gRPC
+- 컨텍스트 사이 어댑터를 네트워크·메시지 어댑터로 교체하고, 그에 맞춰 Saga 를 세운다 ([전환 후 컨텍스트 사이 호출](#전환-후-컨텍스트-사이-호출))
 - 컨텍스트별 스키마(`orders` · `product`)를 단위로 DB 를 떼어 낸다 ([컨텍스트별 스키마 분리](#컨텍스트별-스키마-분리))
 
 > 설계 문서의 상품 컨텍스트에는 판매상태·재고·판매자 ID 가 있지만 엔티티에는 반영하지 않았습니다.
