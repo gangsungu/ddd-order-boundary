@@ -2,7 +2,6 @@ package com.roykhan.dddorderboundary.payment.adapter.in.web;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -10,7 +9,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.roykhan.dddorderboundary.common.config.JacksonConfig;
-import com.roykhan.dddorderboundary.order.exception.domain.OrderErrorCode;
 import com.roykhan.dddorderboundary.payment.application.port.in.PaymentUseCase;
 import com.roykhan.dddorderboundary.payment.domain.model.PaymentResult;
 import org.junit.jupiter.api.DisplayName;
@@ -74,21 +72,5 @@ class PaymentControllerTest {
             .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
 
         verify(paymentUseCase, never()).applyResult(anyLong(), any());
-    }
-
-    @Test
-    @DisplayName("POST /api/payment/{orderId}/result - 이미 확정된 주문이면 409 ORDER_ALREADY_CONFIRMED 로 실패한다")
-    void 이미_확정된_주문() throws Exception {
-        doThrow(OrderErrorCode.ORDER_ALREADY_CONFIRMED.exception())
-            .when(paymentUseCase).applyResult(7L, PaymentResult.SUCCESS);
-
-        mockMvc.perform(post("/api/payment/{orderId}/result", 7L)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {"result": "SUCCESS"}
-                    """))
-            .andExpect(status().isConflict())
-            .andExpect(jsonPath("$.success").value(false))
-            .andExpect(jsonPath("$.code").value("ORDER_ALREADY_CONFIRMED"));
     }
 }

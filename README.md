@@ -16,7 +16,7 @@
 | 3 | 분산 시스템 설계 (CQRS, Event-Driven, ACL, Saga) | |
 | 4 | Kafka & gRPC 실습 | |
 
-현재 진행 상황: **섹션 3** — 세 컨텍스트를 헥사고날(Ports & Adapters) 구조로 옮기고 DB 도 컨텍스트마다 자기 스키마를 갖도록 나눈 뒤([섹션 2 기록](#헥사고날-전환-계획)), 지금은 CQRS · Event-Driven · ACL 을 적용하고 있습니다 ([작업 순서](#섹션-3-작업-순서))
+현재 진행 상황: **섹션 3** — 세 컨텍스트를 헥사고날(Ports & Adapters) 구조로 옮기고 DB 도 컨텍스트마다 자기 스키마를 갖도록 나눈 뒤([섹션 2 기록](#헥사고날-전환-계획)), ACL(1단계)과 Event-Driven(2단계)까지 적용했고, 이제 CQRS 읽기 모델을 올립니다 ([작업 순서](#섹션-3-작업-순서))
 
 ---
 
@@ -105,7 +105,7 @@ src/main/java/com/roykhan/dddorderboundary
 │   │       └── OrderStatus.java
 │   ├── application
 │   │   ├── port
-│   │   │   ├── in                       # 입력 포트 — 컨트롤러·스케줄러·결제가 이것으로 들어온다
+│   │   │   ├── in                       # 입력 포트 — 컨트롤러·스케줄러·결제 이벤트 리스너가 이것으로 들어온다
 │   │   │   │   ├── OrderUseCase.java
 │   │   │   │   ├── CreateOrderCommand.java
 │   │   │   │   └── OrderInfo.java       # 조회 결과 (항목 내역 포함)
@@ -120,7 +120,8 @@ src/main/java/com/roykhan/dddorderboundary
 │       │   │   ├── OrderController.java
 │       │   │   ├── CreateOrderRequest.java  # 생성 요청 (중첩 OrderLine) → 커맨드로 변환
 │       │   │   └── OrderCreateInfo.java     # 생성 응답 (주문 ID)
-│       │   └── scheduler/OrderExpirationScheduler.java  # 결제 마감이 지난 주문 만료
+│       │   ├── scheduler/OrderExpirationScheduler.java  # 결제 마감이 지난 주문 만료
+│       │   └── payment/PaymentEventListener.java  # ACL — 결제 이벤트를 주문의 언어로 번역해 받는다 (커밋 뒤)
 │       └── out
 │           ├── persistence              # 주문 저장소 포트를 Spring Data JPA 로 구현
 │           │   └── OrderRepositoryAdapter.java / OrderJpaRepository.java
@@ -171,20 +172,24 @@ src/main/java/com/roykhan/dddorderboundary
 │               ├── ProductRepositoryAdapter.java / ProductJpaRepository.java
 │               ├── StockRepositoryAdapter.java / StockJpaRepository.java
 │               └── StockReservationRepositoryAdapter.java / StockReservationJpaRepository.java
-└── payment                              # 결제 컨텍스트 (목업) — 상태 없이 결과만 주문에 알린다
-    ├── domain/model/PaymentResult.java  # SUCCESS / FAILURE
+└── payment                              # 결제 컨텍스트 (목업) — 상태 없이 결과를 이벤트로 발행한다
+    ├── domain
+    │   ├── model/PaymentResult.java     # SUCCESS / FAILURE
+    │   └── event                        # 결제가 소유하는 이벤트 계약
+    │       ├── PaymentEvent.java        # sealed — 주문 ID · 발생 시각
+    │       └── PaymentSucceeded.java / PaymentFailed.java
     ├── application
     │   ├── port
     │   │   ├── in/PaymentUseCase.java   # 입력 포트
-    │   │   └── out/OrderPort.java       # 출력 포트 — 결제 결과를 주문에 알린다 (결제 쪽 언어)
-    │   └── service/PaymentApplicationService.java  # 결과를 성공·실패 알림으로 변환
+    │   │   └── out/PaymentEventPublisher.java  # 출력 포트 — 결제 이벤트를 내보낸다 (받는 쪽을 모름)
+    │   └── service/PaymentApplicationService.java  # 결과를 성공·실패 이벤트로 발행
     └── adapter
         ├── in
         │   └── web
         │       ├── PaymentController.java
         │       └── PaymentResultRequest.java
         └── out
-            └── order/OrderAdapter.java  # 알림을 주문 유스케이스 호출(확정·결제 실패)로 옮긴다
+            └── event/SpringPaymentEventPublisher.java  # 스프링 인프로세스 이벤트로 발행 (섹션 4 에서 Kafka 로 교체)
 
 src/main/resources/static/payment.html    # 목업 결제 페이지
 docs/섹션1                                # 섹션 1 미션 산출물 (설계 문서)
@@ -211,7 +216,7 @@ docs/섹션2                                # 섹션 2 미션 산출물 (의존 
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
-| `POST` | `/api/payment/{orderId}/result` | 결제 결과 반영 — 본문 `{"result": "SUCCESS" \| "FAILURE"}` |
+| `POST` | `/api/payment/{orderId}/result` | 결제 결과 반영 — 본문 `{"result": "SUCCESS" \| "FAILURE"}`. 결과를 이벤트로 발행하고, 주문은 결제 트랜잭션이 커밋된 뒤 이벤트를 받아 반영한다 |
 | `GET` | `/payment.html?orderId={orderId}` | 결과를 버튼으로 보내는 목업 결제 페이지 |
 
 ### 상품 API
@@ -287,18 +292,20 @@ OrderApplicationService.confirmOrder(orderId)
 |---|---|---|
 | 없는 상품 조회·수정·삭제 | 404 | `PRODUCT_NOT_FOUND` |
 | 이름이 중복된 상품 등록 | 409 | `PRODUCT_ALREADY_EXIST` |
-| 없는 주문 조회·취소·결제 | 404 | `ORDER_NOT_FOUND` |
+| 없는 주문 조회·취소 | 404 | `ORDER_NOT_FOUND` |
 | 없는 상품이 포함된 주문 | 400 | `INVALID_ORDER_ITEM` |
-| 이미 취소된 주문을 취소·결제 | 409 | `ORDER_ALREADY_CANCELLED` |
-| 만료된 주문을 취소·결제 | 409 | `ORDER_ALREADY_EXPIRED` |
-| 확정된 주문을 취소·결제 | 409 | `ORDER_ALREADY_CONFIRMED` |
-| 결제에 실패한 주문을 취소·결제 | 409 | `ORDER_PAYMENT_FAILED` |
+| 이미 취소된 주문을 취소 | 409 | `ORDER_ALREADY_CANCELLED` |
+| 만료된 주문을 취소 | 409 | `ORDER_ALREADY_EXPIRED` |
+| 확정된 주문을 취소 | 409 | `ORDER_ALREADY_CONFIRMED` |
+| 결제에 실패한 주문을 취소 | 409 | `ORDER_PAYMENT_FAILED` |
 | 재고 부족 | 409 | `OUT_OF_STOCK` |
 | 수량이 1 미만 | 400 | `INVALID_QUANTITY` |
 | 재고를 찾을 수 없음 | 404 | `STOCK_NOT_FOUND` |
 | 확정할 수 없는 상태의 예약 | 409 | `RESERVATION_NOT_CONFIRMABLE` |
 | 해제할 수 없는 상태의 예약 | 409 | `RESERVATION_NOT_CANCELLABLE` |
 | 만료된 예약을 확정 | 409 | `RESERVATION_EXPIRED` |
+
+> 결제 API 는 주문의 에러 코드를 받지 않습니다. 이미 취소·만료된 주문에 결제 결과가 와도 결제 응답은 성공이고, 주문이 반영을 거절한 사실은 주문 쪽 로그(`결제 결과 반영 거절`)로만 남습니다 ([2단계](#2단계--eda-결제--주문)).
 
 공통 코드
 
@@ -484,12 +491,14 @@ PaymentApplicationService
 - 세 컨텍스트 모두 `domain` · `application` · `adapter/in` 에 다른 컨텍스트 import 가 없습니다. 다른 컨텍스트를 아는 파일은 출력 어댑터 셋(`order/adapter/out/product` 의 둘, `payment/adapter/out/order` 의 하나)뿐이고, 그 어댑터도 상대의 입력 포트(`application/port/in`)만 부릅니다.
 - 섹션 3 에서 컨텍스트를 서비스로 떼어 내면 바뀌는 곳은 이 세 어댑터입니다. 호출이 네트워크를 건너면서 한 트랜잭션으로 묶이던 보장이 사라지므로, 그때 보상 흐름(Saga)과 번역 계층(ACL)을 세웁니다.
 
+> 섹션 2 시점의 기록입니다. 섹션 3 2단계에서 결제 → 주문 호출(`OrderPort` · `OrderAdapter`)은 이벤트로 바뀌었습니다 ([2단계](#2단계--eda-결제--주문)).
+
 #### 지금 남은 의존
 
 | 위치 | 지금 남은 의존 | 없애는 단계 |
 |---|---|---|
 | 재고 포트의 예외 | ~~상품 컨텍스트의 에러 코드(`OUT_OF_STOCK` · `RESERVATION_EXPIRED` 등)가 번역 없이 주문 API 응답까지 그대로 나간다~~ | **해결** — 섹션 3 1단계, `StockErrorTranslator` 가 주문의 언어로 번역한다 ([작업 순서](#섹션-3-작업-순서)) |
-| 주문 포트의 예외 | 결제 결과를 반영할 수 없는 주문이면 주문 컨텍스트의 에러 코드(`ORDER_ALREADY_CONFIRMED` 등)가 결제 API 응답으로 그대로 나간다 | 섹션 3 2단계 — 호출을 이벤트로 바꾸면서 주문의 입력 어댑터에서 번역 |
+| 주문 포트의 예외 | ~~결제 결과를 반영할 수 없는 주문이면 주문 컨텍스트의 에러 코드(`ORDER_ALREADY_CONFIRMED` 등)가 결제 API 응답으로 그대로 나간다~~ | **해결** — 섹션 3 2단계, 결제가 주문을 부르지 않고 이벤트를 발행한다. 주문의 거절은 `PaymentEventListener` 에서 끝난다 ([작업 순서](#섹션-3-작업-순서)) |
 
 - 저장소 인터페이스는 2단계부터 포트 자리에 두어, 상품·주문 컨텍스트에서 포트와 어댑터로 쪼갤 때 서비스 코드가 저장소 쪽으로 바뀌지 않았습니다. 6단계에서는 자리만 `domain/repository` → `application/port/out` 으로 옮겼습니다.
 - 서비스 이름은 유스케이스 인터페이스(입력 포트)를 들이는 단계에서 `*ApplicationService` 로 바꿨습니다. (상품 3단계, 주문 4단계, 결제 5단계)
@@ -562,7 +571,7 @@ PaymentApplicationService
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 | **ACL — 주문 → 상품** 재고 포트가 흘리던 상품 컨텍스트의 에러 코드를 주문의 언어로 번역한다 | 완료 |
-| 2 | **EDA — 결제 → 주문** 결제가 결과를 이벤트로 발행하고 주문이 입력 어댑터에서 번역해 받는다. `OrderAdapter` 제거 | |
+| 2 | **EDA — 결제 → 주문** 결제가 결과를 이벤트로 발행하고 주문이 입력 어댑터에서 번역해 받는다. `OrderAdapter` 제거 | 완료 |
 | 3 | **CQRS — 주문 읽기 모델** 주문 이벤트로 읽기 모델을 갱신하고 조회는 거기서 한다 | |
 | 4 | 적용한 패턴과 설계 의도를 README 와 `docs/섹션3` 에 정리 | |
 
@@ -592,6 +601,41 @@ ACL 을 결제 쪽이 아니라 **주문 → 상품 방향부터** 하는 이유
 - 번역표에 없는 코드까지 통과시키면 경계가 뚫리므로, 모르는 것은 주문 쪽 일반 실패로 덮습니다
 - `ProductAdapter` 는 번역할 예외가 없습니다. `findAllByIds` 는 찾은 것만 돌려주고, 빠진 항목의 판단은 주문 서비스가 `INVALID_ORDER_ITEM` 으로 합니다
 - 재고 포트를 목(mock)으로 세우는 주문 서비스 테스트도 이제 주문의 코드만 씁니다. 포트가 상품 컨텍스트의 코드를 던지는 일은 없습니다
+
+#### 2단계 — EDA (결제 → 주문)
+
+결제가 주문의 유스케이스를 직접 부르던 `OrderPort` · `OrderAdapter` 를 없애고, 결제는 결과를 이벤트로 발행만 합니다. 결제 컨텍스트에는 이제 주문 import 가 하나도 없습니다.
+
+```text
+결제                                              주문
+PaymentApplicationService (@Transactional)
+  └─ PaymentEventPublisher ── SpringPaymentEventPublisher
+                                  │  PaymentSucceeded / PaymentFailed   (결제 트랜잭션 커밋 뒤)
+                                  ▼
+                              PaymentEventListener  ── 번역 ──→ OrderUseCase.confirmOrder / failPayment
+                              (order/adapter/in/payment)
+```
+
+| 결제가 발행하는 이벤트 | 주문이 하는 일 |
+|---|---|
+| `PaymentSucceeded` | `confirmOrder` — 주문 확정, 예약 확정 |
+| `PaymentFailed` | `failPayment` — 결제 실패, 예약 해제 |
+| 주문이 거절 (`ORDER_ALREADY_CANCELLED` 등) | 결제로 되돌리지 않고 로그만 남긴다 |
+
+- **이벤트 계약은 결제가 소유합니다** (`payment/domain/event`). `PaymentEvent` 를 `sealed` 로 두어, 받는 쪽의 `switch` 가 이벤트 종류를 빠짐없이 다루는지 컴파일러가 확인합니다
+- **번역은 받는 쪽 입력 어댑터가 합니다.** 결제의 계약을 아는 곳은 주문 안에서 `PaymentEventListener` 하나뿐입니다. 1단계의 ACL 이 출력 쪽(`adapter/out/product/acl`)에서 상대의 예외를 막았다면, 여기서는 입력 쪽에서 상대의 이벤트를 받아 주문의 유스케이스로 옮깁니다
+- **반대 방향도 끊겼습니다.** 예전에는 주문이 거절하면 주문의 에러 코드가 결제 API 응답으로 나갔지만, 이제 결제는 주문의 거절을 모릅니다. 결제 성공인데 주문이 받지 못한 경우(이미 만료 등)는 환불로 보상해야 하고, 이는 Saga 를 세울 때 다룹니다
+- **커밋된 결제만 알립니다.** `@TransactionalEventListener(AFTER_COMMIT)` 이라 결제 트랜잭션이 롤백되면 주문에 닿지 않습니다. 결제는 아직 저장하는 상태가 없어 트랜잭션이 비어 있지만, 결제 기록이 생기면 "기록이 커밋된 결제만 알린다"가 됩니다
+- **리스너는 트랜잭션을 떼어 냅니다** (`@Transactional(propagation = NOT_SUPPORTED)`). 커밋 직후에는 끝난 결제 트랜잭션이 아직 묶여 있어, 유스케이스가 그대로 합류하면 주문 변경이 커밋되지 않습니다. 떼어 두면 유스케이스가 자기 트랜잭션을 새로 엽니다. 이 설정을 빼면 `PaymentEventFlowTest` 가 실패합니다
+- 전달은 아직 같은 스레드의 동기 호출이라, 결제 API 가 응답할 때 주문은 이미 반영되어 있습니다. 목업 결제 페이지가 결제 직후 주문을 다시 읽어도 결과가 보입니다
+
+테스트
+
+| 테스트 | 확인하는 것 |
+|---|---|
+| `PaymentApplicationServiceTest` | 결제 결과를 어떤 이벤트로 발행하는지 |
+| `PaymentEventListenerTest` | 이벤트를 어떤 유스케이스 호출로 번역하는지, 주문의 거절을 밖으로 던지지 않는지 |
+| `PaymentEventFlowTest` | 실제 트랜잭션에서 결제 → 이벤트 → 주문 확정·재고 반영까지 이어지는지 (`@SpringBootTest`, 테스트에 트랜잭션을 걸지 않음) |
 
 ### 섹션 4 이후
 
