@@ -2,7 +2,8 @@ package com.roykhan.dddorderboundary.order.adapter.in.web;
 
 import com.roykhan.dddorderboundary.common.response.ApiResponse;
 import com.roykhan.dddorderboundary.order.application.port.in.OrderInfo;
-import com.roykhan.dddorderboundary.order.application.port.in.OrderUseCase;
+import com.roykhan.dddorderboundary.order.application.port.in.OrderCommandUseCase;
+import com.roykhan.dddorderboundary.order.application.port.in.OrderQueryUseCase;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -19,27 +20,28 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class OrderController {
 
-    private final OrderUseCase orderUseCase;
+    private final OrderCommandUseCase orderCommandUseCase;
+    private final OrderQueryUseCase orderQueryUseCase;
 
     @PostMapping("/order")
     @Operation(summary = "주문 생성", description = "주문을 생성하고 재고를 예약")
     public ApiResponse<OrderCreateInfo> createOrder(@Valid @RequestBody CreateOrderRequest request) {
-        long orderId = orderUseCase.createOrder(request.toCommand());
+        long orderId = orderCommandUseCase.createOrder(request.toCommand());
         OrderCreateInfo orderCreateInfo = new OrderCreateInfo(orderId);
         return ApiResponse.success("주문 생성에 성공했습니다.", orderCreateInfo);
     }
 
     @GetMapping("/order/{orderId}")
-    @Operation(summary = "주문 조회", description = "주문 상태와 주문 시점의 항목 내역을 조회")
+    @Operation(summary = "주문 조회", description = "주문 상태와 주문 시점의 항목 내역을 읽기 모델에서 조회")
     public ApiResponse<OrderInfo> getOrder(@PathVariable long orderId) {
-        OrderInfo orderInfo = orderUseCase.findById(orderId);
+        OrderInfo orderInfo = orderQueryUseCase.findById(orderId);
         return ApiResponse.success("주문을 조회하였습니다.", orderInfo);
     }
 
     @PatchMapping("/order/{orderId}/cancel")
     @Operation(summary = "생성된 주문 취소", description = "생성된 주문을 취소하고 예약된 재고를 반환")
     public ApiResponse<Void> cancelOrder(@PathVariable long orderId) {
-        orderUseCase.cancelOrder(orderId);
+        orderCommandUseCase.cancelOrder(orderId);
         return ApiResponse.success("생성된 주문을 취소하였습니다.");
     }
 }

@@ -6,7 +6,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-import com.roykhan.dddorderboundary.order.application.port.in.OrderUseCase;
+import com.roykhan.dddorderboundary.order.application.port.in.OrderCommandUseCase;
 import com.roykhan.dddorderboundary.order.exception.domain.OrderErrorCode;
 import com.roykhan.dddorderboundary.payment.domain.event.PaymentFailed;
 import com.roykhan.dddorderboundary.payment.domain.event.PaymentSucceeded;
@@ -22,7 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class PaymentEventListenerTest {
 
     @Mock
-    private OrderUseCase orderUseCase;
+    private OrderCommandUseCase orderCommandUseCase;
 
     @InjectMocks
     private PaymentEventListener listener;
@@ -32,8 +32,8 @@ class PaymentEventListenerTest {
     void 결제_성공_이벤트() {
         listener.on(PaymentSucceeded.of(7L));
 
-        verify(orderUseCase).confirmOrder(7L);
-        verify(orderUseCase, never()).failPayment(anyLong());
+        verify(orderCommandUseCase).confirmOrder(7L);
+        verify(orderCommandUseCase, never()).failPayment(anyLong());
     }
 
     @Test
@@ -41,14 +41,14 @@ class PaymentEventListenerTest {
     void 결제_실패_이벤트() {
         listener.on(PaymentFailed.of(7L));
 
-        verify(orderUseCase).failPayment(7L);
-        verify(orderUseCase, never()).confirmOrder(anyLong());
+        verify(orderCommandUseCase).failPayment(7L);
+        verify(orderCommandUseCase, never()).confirmOrder(anyLong());
     }
 
     @Test
     @DisplayName("주문이 결과를 반영하지 못해도 주문의 에러 코드는 결제 쪽으로 던지지 않는다")
     void 반영_거절() {
-        doThrow(OrderErrorCode.ORDER_ALREADY_EXPIRED.exception()).when(orderUseCase).confirmOrder(7L);
+        doThrow(OrderErrorCode.ORDER_ALREADY_EXPIRED.exception()).when(orderCommandUseCase).confirmOrder(7L);
 
         assertThatCode(() -> listener.on(PaymentSucceeded.of(7L))).doesNotThrowAnyException();
     }

@@ -1,13 +1,18 @@
 package com.roykhan.dddorderboundary.order.application.service;
 
 import com.roykhan.dddorderboundary.order.application.port.in.CreateOrderCommand;
-import com.roykhan.dddorderboundary.order.application.port.in.OrderInfo;
-import com.roykhan.dddorderboundary.order.application.port.in.OrderUseCase;
+import com.roykhan.dddorderboundary.order.application.port.in.OrderCommandUseCase;
+import com.roykhan.dddorderboundary.order.application.port.out.OrderEventPublisher;
 import com.roykhan.dddorderboundary.order.application.port.out.OrderRepository;
 import com.roykhan.dddorderboundary.order.application.port.out.ProductPort;
 import com.roykhan.dddorderboundary.order.application.port.out.ProductSnapshot;
 import com.roykhan.dddorderboundary.order.application.port.out.StockLine;
 import com.roykhan.dddorderboundary.order.application.port.out.StockPort;
+import com.roykhan.dddorderboundary.order.domain.event.OrderCancelled;
+import com.roykhan.dddorderboundary.order.domain.event.OrderConfirmed;
+import com.roykhan.dddorderboundary.order.domain.event.OrderExpired;
+import com.roykhan.dddorderboundary.order.domain.event.OrderPaymentFailed;
+import com.roykhan.dddorderboundary.order.domain.event.OrderPlaced;
 import com.roykhan.dddorderboundary.order.domain.model.Order;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
 import com.roykhan.dddorderboundary.order.exception.out.OrderLookupErrorCode;
@@ -21,15 +26,19 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+// 쓰기(Command) 쪽 - 주문 상태를 바꾸고, 바뀔 때마다 주문 이벤트를 발행한다.
+// 조회 응답을 만들지 않는다. 읽기 모델은 이 이벤트를 받아 따로 갱신된다
 @Service
 @RequiredArgsConstructor
-public class OrderApplicationService implements OrderUseCase {
+public class OrderCommandService implements OrderCommandUseCase {
 
     private final OrderRepository orderRepository;
 
     // 상품·재고는 주문 쪽 출력 포트로만 부른다. 상품 컨텍스트를 어떻게 부르는지는 어댑터가 안다
     private final ProductPort productPort;
     private final StockPort stockPort;
+
+    private final OrderEventPublisher eventPublisher;
 
     @Value("${order.reservation.expire-time:10}")
     private int expireTime;
@@ -66,14 +75,10 @@ public class OrderApplicationService implements OrderUseCase {
             .toList();
         stockPort.reserve(order.getId(), lines, expireAt);
 
-        return order.getId();
-    }
+        // 예약까지 성공한 주문만 알린다. 예약이 실패하면 트랜잭션과 함께 이벤트도 버려진다
+        eventPublisher.publish(OrderPlaced.from(order));
 
-    // 항목까지 트랜잭션 안에서 DTO 로 옮긴다 (open-in-view: false)
-    @Override
-    @Transactional(readOnly = true)
-    public OrderInfo findById(long orderId) {
-        return OrderInfo.from(getOrder(orderId));
+        return order.getId();
     }
 
     @Override
@@ -84,6 +89,7 @@ public class OrderApplicationService implements OrderUseCase {
         // 취소 가능한 상태인지는 Order 가 판단한다
         order.cancel();
         stockPort.cancel(orderId);
+        eventPublisher.publish(OrderCancelled.from(order));
 
         // 연관된 PENDING 상태 결제도 취소 처리
         // 추후 작업 부분
@@ -93,16 +99,20 @@ public class OrderApplicationService implements OrderUseCase {
     @Override
     @Transactional
     public void confirmOrder(long orderId) {
-        getOrder(orderId).confirm();
+        Order order = getOrder(orderId);
+        order.confirm();
         stockPort.confirm(orderId);
+        eventPublisher.publish(OrderConfirmed.from(order));
     }
 
     // 결제 실패 - 예약을 해제해 재고를 복원한다
     @Override
     @Transactional
     public void failPayment(long orderId) {
-        getOrder(orderId).failPayment();
+        Order order = getOrder(orderId);
+        order.failPayment();
         stockPort.cancel(orderId);
+        eventPublisher.publish(OrderPaymentFailed.from(order));
     }
 
     // 결제 마감이 지난 PENDING 주문 ID
@@ -117,8 +127,10 @@ public class OrderApplicationService implements OrderUseCase {
     @Override
     @Transactional
     public void expireOrder(long orderId) {
-        getOrder(orderId).expire();
+        Order order = getOrder(orderId);
+        order.expire();
         stockPort.expire(orderId);
+        eventPublisher.publish(OrderExpired.from(order));
     }
 
     private Order getOrder(long orderId) {
