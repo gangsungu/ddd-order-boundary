@@ -16,7 +16,7 @@
 | 3 | 분산 시스템 설계 (CQRS, Event-Driven, ACL, Saga) | |
 | 4 | Kafka & gRPC 실습 | |
 
-현재 진행 상황: **섹션 3** — 세 컨텍스트를 헥사고날(Ports & Adapters) 구조로 옮기고 DB 도 컨텍스트마다 자기 스키마를 갖도록 나눈 뒤([섹션 2 기록](#헥사고날-전환-계획)), ACL(1단계)과 Event-Driven(2단계)까지 적용했고, 이제 CQRS 읽기 모델을 올립니다 ([작업 순서](#섹션-3-작업-순서))
+현재 진행 상황: **섹션 3** — 세 컨텍스트를 헥사고날(Ports & Adapters) 구조로 옮기고 DB 도 컨텍스트마다 자기 스키마를 갖도록 나눈 뒤([섹션 2 기록](#헥사고날-전환-계획)), ACL(1단계) · Event-Driven(2단계) · CQRS 읽기 모델(3단계)까지 적용했고, 이제 설계 의도를 문서로 정리합니다 ([작업 순서](#섹션-3-작업-순서))
 
 ---
 
@@ -99,32 +99,48 @@ src/main/java/com/roykhan/dddorderboundary
 │   │       ├── OrderLookupErrorCode.java    # 출력 포트가 "없다"고 답함 (주문·상품 조회 실패)
 │   │       └── StockPortErrorCode.java      # 재고 포트 실패를 주문의 언어로 (ACL 번역 결과)
 │   ├── domain
-│   │   └── model
-│   │       ├── Order.java               # 주문 애그리거트 루트 — 상태 전이와 총액 계산
-│   │       ├── OrderItem.java           # 주문 시점 상품명·단가 스냅샷
-│   │       └── OrderStatus.java
+│   │   ├── model                        # 쓰기 모델
+│   │   │   ├── Order.java               # 주문 애그리거트 루트 — 상태 전이와 총액 계산
+│   │   │   ├── OrderItem.java           # 주문 시점 상품명·단가 스냅샷
+│   │   │   └── OrderStatus.java
+│   │   └── event                        # 주문이 소유하는 이벤트 계약 — 상태가 바뀔 때마다 하나씩
+│   │       ├── OrderEvent.java          # sealed — 주문 ID · 발생 시각
+│   │       ├── OrderPlaced.java         # 생성 — 읽기 모델이 그릴 수 있도록 항목까지 싣는다
+│   │       └── OrderConfirmed / OrderCancelled / OrderPaymentFailed / OrderExpired.java
 │   ├── application
 │   │   ├── port
-│   │   │   ├── in                       # 입력 포트 — 컨트롤러·스케줄러·결제 이벤트 리스너가 이것으로 들어온다
-│   │   │   │   ├── OrderUseCase.java
+│   │   │   ├── in
+│   │   │   │   ├── OrderCommandUseCase.java     # 쓰기 — 컨트롤러·스케줄러·결제 이벤트 리스너가 주문을 바꾼다
 │   │   │   │   ├── CreateOrderCommand.java
-│   │   │   │   └── OrderInfo.java       # 조회 결과 (항목 내역 포함)
+│   │   │   │   ├── OrderQueryUseCase.java       # 읽기 — 읽기 모델에서 조회
+│   │   │   │   ├── OrderInfo.java               # 읽기 모델 (조회 응답의 모양 그대로)
+│   │   │   │   └── OrderProjectionUseCase.java  # 주문 이벤트를 읽기 모델에 반영
 │   │   │   └── out                      # 출력 포트 — 주문 쪽 언어로 정의
-│   │   │       ├── OrderRepository.java                     # 주문 저장소
+│   │   │       ├── OrderRepository.java                     # 쓰기 모델 저장소
+│   │   │       ├── OrderEventPublisher.java                 # 주문 이벤트 발행
+│   │   │       ├── OrderViewRepository.java                 # 읽기 모델 저장소
 │   │   │       ├── ProductPort.java / ProductSnapshot.java  # 주문 시점 스냅샷용 이름·단가
 │   │   │       └── StockPort.java / StockLine.java          # 주문 ID 단위 예약·확정·해제·만료
-│   │   └── service/OrderApplicationService.java
+│   │   └── service
+│   │       ├── OrderCommandService.java     # 쓰기 — 상태를 바꾸고 이벤트를 발행
+│   │       ├── OrderQueryService.java       # 읽기 — 읽기 모델을 그대로 돌려줌
+│   │       └── OrderProjectionService.java  # 이벤트만 보고 읽기 모델을 갱신
 │   └── adapter
 │       ├── in
 │       │   ├── web
-│       │   │   ├── OrderController.java
+│       │   │   ├── OrderController.java     # 생성·취소는 쓰기, 조회는 읽기 유스케이스로
 │       │   │   ├── CreateOrderRequest.java  # 생성 요청 (중첩 OrderLine) → 커맨드로 변환
 │       │   │   └── OrderCreateInfo.java     # 생성 응답 (주문 ID)
 │       │   ├── scheduler/OrderExpirationScheduler.java  # 결제 마감이 지난 주문 만료
-│       │   └── payment/PaymentEventListener.java  # ACL — 결제 이벤트를 주문의 언어로 번역해 받는다 (커밋 뒤)
+│       │   ├── payment/PaymentEventListener.java  # ACL — 결제 이벤트를 주문의 언어로 번역해 받는다 (커밋 뒤)
+│       │   └── event/OrderEventListener.java      # CQRS — 주문 이벤트를 받아 읽기 모델 갱신 (커밋 뒤)
 │       └── out
-│           ├── persistence              # 주문 저장소 포트를 Spring Data JPA 로 구현
-│           │   └── OrderRepositoryAdapter.java / OrderJpaRepository.java
+│           ├── event/SpringOrderEventPublisher.java  # 스프링 인프로세스 이벤트로 발행
+│           ├── persistence              # 저장소 포트를 Spring Data JPA 로 구현
+│           │   ├── OrderRepositoryAdapter.java / OrderJpaRepository.java
+│           │   └── view                 # 읽기 모델 — orders.order_view · order_view_items
+│           │       ├── OrderViewEntity.java / OrderViewItem.java
+│           │       └── OrderViewRepositoryAdapter.java / OrderViewJpaRepository.java
 │           └── product                  # 상품·재고 포트를 상품 컨텍스트의 유스케이스로 구현
 │               ├── ProductAdapter.java
 │               ├── StockAdapter.java
@@ -209,7 +225,7 @@ docs/섹션2                                # 섹션 2 미션 산출물 (의존 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
 | `POST` | `/api/order` | 주문 생성 — 상품·재고를 확인하고 재고를 예약 |
-| `GET` | `/api/order/{orderId}` | 주문 조회 — 상태와 주문 시점 항목 내역 |
+| `GET` | `/api/order/{orderId}` | 주문 조회 — 상태와 주문 시점 항목 내역. 쓰기 모델이 아닌 읽기 모델(`order_view`)에서 읽는다 |
 | `PATCH` | `/api/order/{orderId}/cancel` | 주문 취소 — 예약한 재고를 반환 |
 
 ### 결제 API (목업)
@@ -247,10 +263,11 @@ docs/섹션2                                # 섹션 2 미션 산출물 (의존 
 주문과 재고 예약은 객체로 묶지 않고 **주문 ID 로만 연결**합니다. `Order` 는 예약을 들지 않고 자기 상태 전이만 책임지며, 예약(`StockReservation`)이 `orderId` 를 가집니다. 주문 서비스는 주문 상태를 먼저 바꾼 뒤, 같은 트랜잭션 안에서 그 주문 ID 의 예약을 확정·해제·만료하도록 재고 쪽에 요청합니다.
 
 ```text
-OrderApplicationService.confirmOrder(orderId)
+OrderCommandService.confirmOrder(orderId)
  ├─ Order.confirm()           주문 상태 전이 (PENDING → CONFIRMED), 불가능하면 여기서 예외
- └─ StockPort.confirm(orderId)
-     └─ StockAdapter → StockUseCase.confirmReservations(orderId)   그 주문의 예약을 모두 확정 → 총 재고 차감
+ ├─ StockPort.confirm(orderId)
+ │   └─ StockAdapter → StockUseCase.confirmReservations(orderId)   그 주문의 예약을 모두 확정 → 총 재고 차감
+ └─ OrderEventPublisher.publish(OrderConfirmed)                    커밋 뒤 읽기 모델 갱신 (CQRS)
 ```
 
 - 주문 상태 검사에 걸리면 재고 쪽은 호출하지 않습니다. 예약 쪽에서 예외가 나면(`RESERVATION_EXPIRED` 등) 트랜잭션이 함께 되돌아가 주문 상태도 원래대로 남습니다.
@@ -572,7 +589,7 @@ PaymentApplicationService
 |---|---|---|
 | 1 | **ACL — 주문 → 상품** 재고 포트가 흘리던 상품 컨텍스트의 에러 코드를 주문의 언어로 번역한다 | 완료 |
 | 2 | **EDA — 결제 → 주문** 결제가 결과를 이벤트로 발행하고 주문이 입력 어댑터에서 번역해 받는다. `OrderAdapter` 제거 | 완료 |
-| 3 | **CQRS — 주문 읽기 모델** 주문 이벤트로 읽기 모델을 갱신하고 조회는 거기서 한다 | |
+| 3 | **CQRS — 주문 읽기 모델** 주문 이벤트로 읽기 모델을 갱신하고 조회는 거기서 한다 | 완료 |
 | 4 | 적용한 패턴과 설계 의도를 README 와 `docs/섹션3` 에 정리 | |
 
 순서는 위험도 순입니다. ACL 은 앞뒤 의존이 없어 1단계에서 끝나지만, CQRS 읽기 모델은 2단계의 이벤트 위에 올라갑니다.
@@ -612,7 +629,7 @@ PaymentApplicationService (@Transactional)
   └─ PaymentEventPublisher ── SpringPaymentEventPublisher
                                   │  PaymentSucceeded / PaymentFailed   (결제 트랜잭션 커밋 뒤)
                                   ▼
-                              PaymentEventListener  ── 번역 ──→ OrderUseCase.confirmOrder / failPayment
+                              PaymentEventListener  ── 번역 ──→ OrderCommandUseCase.confirmOrder / failPayment
                               (order/adapter/in/payment)
 ```
 
@@ -636,6 +653,49 @@ PaymentApplicationService (@Transactional)
 | `PaymentApplicationServiceTest` | 결제 결과를 어떤 이벤트로 발행하는지 |
 | `PaymentEventListenerTest` | 이벤트를 어떤 유스케이스 호출로 번역하는지, 주문의 거절을 밖으로 던지지 않는지 |
 | `PaymentEventFlowTest` | 실제 트랜잭션에서 결제 → 이벤트 → 주문 확정·재고 반영까지 이어지는지 (`@SpringBootTest`, 테스트에 트랜잭션을 걸지 않음) |
+
+#### 3단계 — CQRS (주문 읽기 모델)
+
+주문의 쓰기와 조회를 유스케이스·서비스·저장소까지 나눴습니다. 쓰기는 상태를 바꾸고 이벤트를 발행할 뿐 조회 응답을 만들지 않고, 조회는 이벤트로 갱신되는 별도 테이블(`orders.order_view`)만 읽습니다.
+
+```text
+쓰기 (Command)                                           읽기 (Query)
+OrderController ─ POST·PATCH                             OrderController ─ GET
+  └─ OrderCommandUseCase                                   └─ OrderQueryUseCase
+      OrderCommandService                                      OrderQueryService
+        ├─ Order (쓰기 모델, orders.orders)                       └─ OrderViewRepository ── orders.order_view
+        └─ OrderEventPublisher ── OrderPlaced / OrderConfirmed / …           ▲
+                                   │  (쓰기 트랜잭션 커밋 뒤)                  │
+                                   ▼                                         │
+                              OrderEventListener ── OrderProjectionUseCase ──┘
+                              (adapter/in/event)     OrderProjectionService
+```
+
+| 쓰기 | 발행하는 이벤트 | 읽기 모델 |
+|---|---|---|
+| `createOrder` | `OrderPlaced` (항목·총액·마감 포함) | `PENDING` 으로 새로 만든다 |
+| `confirmOrder` | `OrderConfirmed` | `CONFIRMED`, `confirmedAt` |
+| `cancelOrder` | `OrderCancelled` | `CANCELLED`, `cancelledAt` |
+| `failPayment` | `OrderPaymentFailed` | `PAYMENT_FAILED`, `cancelledAt` |
+| `expireOrder` | `OrderExpired` | `EXPIRED`, `cancelledAt` |
+
+- **읽기 모델은 이벤트만 보고 그립니다.** `OrderProjectionService` 는 쓰기 모델(`Order`)을 다시 읽지 않습니다. 그래서 `OrderPlaced` 에 주문 시점의 항목까지 싣습니다. 발생 시각은 `Order` 가 상태를 바꾸며 남긴 시각을 그대로 써서 두 모델의 시각이 어긋나지 않습니다
+- **`OrderInfo` 가 곧 읽기 모델입니다.** 전에는 조회할 때마다 `Order` 에서 만들었지만, 이제 조회 응답의 모양 그대로 저장해 두고 그대로 돌려줍니다. JPA 매핑은 `adapter/out/persistence/view` 의 `OrderViewEntity` 에만 있어, 쓰기 모델과 달리 읽기 모델은 JPA 를 모릅니다
+- **읽기 모델은 쓰기 트랜잭션이 커밋된 뒤에 갱신합니다** (`AFTER_COMMIT`, 2단계와 같은 이유로 `NOT_SUPPORTED`). 재고가 부족해 되돌아간 주문은 읽기 모델에 나타나지 않습니다. 대신 쓰기와 읽기 사이에 틈이 생깁니다(결과적 일관성). 지금은 같은 스레드에서 이어져 API 가 응답할 때는 이미 반영되어 있지만, 섹션 4 에서 Kafka 를 건너면 주문 직후 조회가 `ORDER_NOT_FOUND` 일 수 있습니다
+- **갱신이 실패해도 쓰기는 되돌리지 않습니다.** 쓰기는 이미 커밋됐으므로 `OrderEventListener` 는 로그만 남기고, 읽기 모델만 뒤처집니다. 생성 이벤트를 놓친 주문의 후속 이벤트도 로그로 남기고 건너뜁니다. 쓰기 모델에서 읽기 모델을 다시 만드는 재구축은 아직 없습니다
+- **만료 대상 조회는 쓰기 쪽에 남겼습니다.** `findExpiredOrderIds` 는 화면에 보여 줄 조회가 아니라 만료라는 쓰기를 하려고 쓰기 모델을 읽는 것이라 `OrderCommandUseCase` 에 둡니다
+- 섹션 2 기록의 `OrderUseCase` · `OrderApplicationService` 는 이 단계에서 `OrderCommandUseCase` · `OrderCommandService` 와 조회 쪽으로 나뉘었습니다
+- PostgreSQL 프로필은 `ddl-auto: none` 이라 `orders.order_view` · `orders.order_view_items` 를 미리 만들어 두어야 합니다
+
+테스트
+
+| 테스트 | 확인하는 것 |
+|---|---|
+| `OrderCommandServiceTest` | 상태가 바뀔 때마다 맞는 이벤트를 발행하는지, 상태 검사·재고 예약에 실패하면 발행하지 않는지 |
+| `OrderProjectionServiceTest` | 이벤트마다 읽기 모델을 어떻게 바꾸는지, 읽기 모델에 없는 주문의 이벤트를 건너뛰는지 |
+| `OrderQueryServiceTest` · `OrderEventListenerTest` | 조회는 읽기 모델만 보는지, 갱신 실패를 쓰기 쪽으로 던지지 않는지 |
+| `OrderReadModelFlowTest` | 실제 트랜잭션에서 생성·취소가 읽기 모델까지 이어지는지, 롤백된 주문은 나타나지 않는지, 조회가 읽기 모델에서만 읽는지 |
+| `PaymentEventFlowTest` | 결제 이벤트 → 주문 확정 → 주문 이벤트 → 읽기 모델까지 두 번의 이벤트를 건너 이어지는지 |
 
 ### 섹션 4 이후
 

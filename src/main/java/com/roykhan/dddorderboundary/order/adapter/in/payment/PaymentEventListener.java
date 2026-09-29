@@ -1,7 +1,7 @@
 package com.roykhan.dddorderboundary.order.adapter.in.payment;
 
 import com.roykhan.dddorderboundary.common.exception.BusinessException;
-import com.roykhan.dddorderboundary.order.application.port.in.OrderUseCase;
+import com.roykhan.dddorderboundary.order.application.port.in.OrderCommandUseCase;
 import com.roykhan.dddorderboundary.payment.domain.event.PaymentEvent;
 import com.roykhan.dddorderboundary.payment.domain.event.PaymentFailed;
 import com.roykhan.dddorderboundary.payment.domain.event.PaymentSucceeded;
@@ -27,7 +27,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @RequiredArgsConstructor
 public class PaymentEventListener {
 
-    private final OrderUseCase orderUseCase;
+    private final OrderCommandUseCase orderCommandUseCase;
 
     // 결제 트랜잭션이 커밋된 뒤에만 받는다. 롤백된 결제는 주문에 닿지 않는다.
     // 커밋 직후에는 끝난 결제 트랜잭션이 아직 묶여 있어, 그대로 합류하면 주문 변경이 커밋되지 않는다.
@@ -37,8 +37,8 @@ public class PaymentEventListener {
     public void on(PaymentEvent event) {
         try {
             switch (event) {
-                case PaymentSucceeded e -> orderUseCase.confirmOrder(e.orderId());
-                case PaymentFailed e -> orderUseCase.failPayment(e.orderId());
+                case PaymentSucceeded e -> orderCommandUseCase.confirmOrder(e.orderId());
+                case PaymentFailed e -> orderCommandUseCase.failPayment(e.orderId());
             }
             log.info("결제 결과 반영: orderId={}, event={}", event.orderId(), event.getClass().getSimpleName());
         } catch (BusinessException e) {

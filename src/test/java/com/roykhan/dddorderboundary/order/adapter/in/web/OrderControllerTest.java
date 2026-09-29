@@ -15,7 +15,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.roykhan.dddorderboundary.common.config.JacksonConfig;
 import com.roykhan.dddorderboundary.order.application.port.in.CreateOrderCommand;
 import com.roykhan.dddorderboundary.order.application.port.in.OrderInfo;
-import com.roykhan.dddorderboundary.order.application.port.in.OrderUseCase;
+import com.roykhan.dddorderboundary.order.application.port.in.OrderCommandUseCase;
+import com.roykhan.dddorderboundary.order.application.port.in.OrderQueryUseCase;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
 import com.roykhan.dddorderboundary.order.exception.domain.OrderErrorCode;
 import com.roykhan.dddorderboundary.order.exception.out.OrderLookupErrorCode;
@@ -41,12 +42,15 @@ class OrderControllerTest {
     private MockMvc mockMvc;
 
     @MockitoBean
-    private OrderUseCase orderUseCase;
+    private OrderCommandUseCase orderCommandUseCase;
+
+    @MockitoBean
+    private OrderQueryUseCase orderQueryUseCase;
 
     @Test
     @DisplayName("POST /api/order - 요청을 커맨드로 바꿔 넘기고, 부여된 주문 ID 를 data 에 담아 반환한다")
     void 주문_생성() throws Exception {
-        given(orderUseCase.createOrder(any(CreateOrderCommand.class))).willReturn(42L);
+        given(orderCommandUseCase.createOrder(any(CreateOrderCommand.class))).willReturn(42L);
 
         mockMvc.perform(post("/api/order")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -65,7 +69,7 @@ class OrderControllerTest {
             .andExpect(jsonPath("$.data.orderId").value(42));
 
         ArgumentCaptor<CreateOrderCommand> captor = ArgumentCaptor.forClass(CreateOrderCommand.class);
-        verify(orderUseCase).createOrder(captor.capture());
+        verify(orderCommandUseCase).createOrder(captor.capture());
         CreateOrderCommand command = captor.getValue();
         assertThat(command.memberId()).isEqualTo(7L);
         assertThat(command.lines()).containsExactly(
@@ -85,7 +89,7 @@ class OrderControllerTest {
             .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
             .andExpect(jsonPath("$.data.items").value("주문 항목은 최소 1개 이상이어야 합니다."));
 
-        verify(orderUseCase, never()).createOrder(any());
+        verify(orderCommandUseCase, never()).createOrder(any());
     }
 
     @Test
@@ -100,7 +104,7 @@ class OrderControllerTest {
             .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
             .andExpect(jsonPath("$.data['items[0].quantity']").value("수량은 1개 이상이어야 합니다."));
 
-        verify(orderUseCase, never()).createOrder(any());
+        verify(orderCommandUseCase, never()).createOrder(any());
     }
 
     @Test
@@ -110,7 +114,7 @@ class OrderControllerTest {
             1L, 7L, OrderStatus.PENDING, new BigDecimal("178000.00"),
             LocalDateTime.of(2026, 9, 22, 20, 0), null, null,
             List.of(new OrderInfo.Item(1L, "글렌피딕 12년", new BigDecimal("89000.00"), 2, new BigDecimal("178000.00"))));
-        given(orderUseCase.findById(1L)).willReturn(info);
+        given(orderQueryUseCase.findById(1L)).willReturn(info);
 
         mockMvc.perform(get("/api/order/{orderId}", 1L))
             .andExpect(status().isOk())
@@ -125,7 +129,7 @@ class OrderControllerTest {
     @Test
     @DisplayName("GET /api/order/{orderId} - 주문이 없으면 404 ORDER_NOT_FOUND 로 실패한다")
     void 주문_없음() throws Exception {
-        given(orderUseCase.findById(99L)).willThrow(OrderLookupErrorCode.ORDER_NOT_FOUND.exception());
+        given(orderQueryUseCase.findById(99L)).willThrow(OrderLookupErrorCode.ORDER_NOT_FOUND.exception());
 
         mockMvc.perform(get("/api/order/{orderId}", 99L))
             .andExpect(status().isNotFound())
@@ -142,13 +146,13 @@ class OrderControllerTest {
             .andExpect(jsonPath("$.message").value("생성된 주문을 취소하였습니다."))
             .andExpect(jsonPath("$.data").doesNotExist());
 
-        verify(orderUseCase).cancelOrder(7L);
+        verify(orderCommandUseCase).cancelOrder(7L);
     }
 
     @Test
     @DisplayName("PATCH /api/order/{orderId}/cancel - 확정된 주문이면 409 ORDER_ALREADY_CONFIRMED 로 실패한다")
     void 확정된_주문_취소() throws Exception {
-        doThrow(OrderErrorCode.ORDER_ALREADY_CONFIRMED.exception()).when(orderUseCase).cancelOrder(7L);
+        doThrow(OrderErrorCode.ORDER_ALREADY_CONFIRMED.exception()).when(orderCommandUseCase).cancelOrder(7L);
 
         mockMvc.perform(patch("/api/order/{orderId}/cancel", 7L))
             .andExpect(status().isConflict())

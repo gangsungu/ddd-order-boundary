@@ -1,12 +1,12 @@
 package com.roykhan.dddorderboundary.order.application.port.in;
 
-import com.roykhan.dddorderboundary.order.domain.model.Order;
-import com.roykhan.dddorderboundary.order.domain.model.OrderItem;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
+// 주문 읽기 모델 - 조회 응답의 모양 그대로 저장해 두고 그대로 돌려준다.
+// 쓰기 모델(Order)에서 만들지 않는다. 주문 이벤트를 받아 OrderProjectionService 가 채운다
 public record OrderInfo(
     Long id,
     Long memberId,
@@ -24,28 +24,14 @@ public record OrderInfo(
         BigDecimal unitPrice,
         int quantity,
         BigDecimal amount
-    ) {
-        public static Item from(OrderItem orderItem) {
-            return new Item(
-                orderItem.getProductId(),
-                orderItem.getProductName(),
-                orderItem.getUnitPrice(),
-                orderItem.getQuantity(),
-                orderItem.amount()
-            );
-        }
+    ) {}
+
+    public OrderInfo confirmed(LocalDateTime confirmedAt) {
+        return new OrderInfo(id, memberId, OrderStatus.CONFIRMED, totalPrice, expireAt, confirmedAt, cancelledAt, items);
     }
 
-    public static OrderInfo from(Order order) {
-        return new OrderInfo(
-            order.getId(),
-            order.getMemberId(),
-            order.getOrderStatus(),
-            order.getTotalPrice(),
-            order.getExpireAt(),
-            order.getConfirmedAt(),
-            order.getCancelledAt(),
-            order.getItems().stream().map(Item::from).toList()
-        );
+    // 사용자 취소·결제 실패·만료는 모두 풀린 시각을 cancelledAt 에 남긴다 (쓰기 모델과 같은 규칙)
+    public OrderInfo released(OrderStatus status, LocalDateTime cancelledAt) {
+        return new OrderInfo(id, memberId, status, totalPrice, expireAt, confirmedAt, cancelledAt, items);
     }
 }

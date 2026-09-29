@@ -4,7 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 import com.roykhan.dddorderboundary.order.application.port.in.CreateOrderCommand;
-import com.roykhan.dddorderboundary.order.application.port.in.OrderUseCase;
+import com.roykhan.dddorderboundary.order.application.port.in.OrderCommandUseCase;
+import com.roykhan.dddorderboundary.order.application.port.in.OrderQueryUseCase;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
 import com.roykhan.dddorderboundary.payment.application.port.in.PaymentUseCase;
 import com.roykhan.dddorderboundary.payment.domain.model.PaymentResult;
@@ -22,6 +23,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
 // 결제 → 주문이 호출 없이 이벤트로만 이어지는지 실제 트랜잭션으로 확인한다.
+// 주문 상태는 읽기 모델로 확인하므로, 결제 이벤트 → 주문 확정 → 주문 이벤트 → 읽기 모델 갱신까지 한 번에 지나간다.
 // 리스너는 결제 트랜잭션이 커밋된 뒤에 돌기 때문에 테스트에 @Transactional 을 걸지 않는다
 @SpringBootTest
 @DisplayName("결제 이벤트 흐름 통합 테스트")
@@ -31,7 +33,10 @@ class PaymentEventFlowTest {
     private PaymentUseCase paymentUseCase;
 
     @Autowired
-    private OrderUseCase orderUseCase;
+    private OrderCommandUseCase orderCommandUseCase;
+
+    @Autowired
+    private OrderQueryUseCase orderQueryUseCase;
 
     @Autowired
     private ProductUseCase productUseCase;
@@ -46,7 +51,7 @@ class PaymentEventFlowTest {
     void setUp() {
         // 상품명은 중복 등록을 막으므로 테스트마다 다른 이름을 쓴다
         productId = productUseCase.register(new RegisterProductCommand("상품-" + UUID.randomUUID(), "설명", new BigDecimal("1000"), 10));
-        orderId = orderUseCase.createOrder(new CreateOrderCommand(1L, List.of(new CreateOrderCommand.Line(productId, 3))));
+        orderId = orderCommandUseCase.createOrder(new CreateOrderCommand(1L, List.of(new CreateOrderCommand.Line(productId, 3))));
     }
 
     @Test
@@ -54,7 +59,7 @@ class PaymentEventFlowTest {
     void 결제_성공() {
         paymentUseCase.applyResult(orderId, PaymentResult.SUCCESS);
 
-        assertThat(orderUseCase.findById(orderId).orderStatus()).isEqualTo(OrderStatus.CONFIRMED);
+        assertThat(orderQueryUseCase.findById(orderId).orderStatus()).isEqualTo(OrderStatus.CONFIRMED);
         StockInfo stock = stockUseCase.findByProductId(productId);
         assertThat(stock.quantity()).isEqualTo(7);
         assertThat(stock.reservedQuantity()).isZero();
@@ -65,7 +70,7 @@ class PaymentEventFlowTest {
     void 결제_실패() {
         paymentUseCase.applyResult(orderId, PaymentResult.FAILURE);
 
-        assertThat(orderUseCase.findById(orderId).orderStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+        assertThat(orderQueryUseCase.findById(orderId).orderStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
         StockInfo stock = stockUseCase.findByProductId(productId);
         assertThat(stock.quantity()).isEqualTo(10);
         assertThat(stock.availableQuantity()).isEqualTo(10);
@@ -74,9 +79,9 @@ class PaymentEventFlowTest {
     @Test
     @DisplayName("주문이 결과를 반영하지 못해도 결제는 주문의 에러를 받지 않는다")
     void 반영_거절() {
-        orderUseCase.cancelOrder(orderId);
+        orderCommandUseCase.cancelOrder(orderId);
 
         assertThatCode(() -> paymentUseCase.applyResult(orderId, PaymentResult.SUCCESS)).doesNotThrowAnyException();
-        assertThat(orderUseCase.findById(orderId).orderStatus()).isEqualTo(OrderStatus.CANCELLED);
+        assertThat(orderQueryUseCase.findById(orderId).orderStatus()).isEqualTo(OrderStatus.CANCELLED);
     }
 }

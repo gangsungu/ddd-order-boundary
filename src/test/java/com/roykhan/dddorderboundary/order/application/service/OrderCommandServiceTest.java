@@ -14,12 +14,17 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.roykhan.dddorderboundary.common.exception.BusinessException;
 import com.roykhan.dddorderboundary.order.application.port.in.CreateOrderCommand;
-import com.roykhan.dddorderboundary.order.application.port.in.OrderInfo;
+import com.roykhan.dddorderboundary.order.application.port.out.OrderEventPublisher;
 import com.roykhan.dddorderboundary.order.application.port.out.OrderRepository;
 import com.roykhan.dddorderboundary.order.application.port.out.ProductPort;
 import com.roykhan.dddorderboundary.order.application.port.out.ProductSnapshot;
 import com.roykhan.dddorderboundary.order.application.port.out.StockLine;
 import com.roykhan.dddorderboundary.order.application.port.out.StockPort;
+import com.roykhan.dddorderboundary.order.domain.event.OrderCancelled;
+import com.roykhan.dddorderboundary.order.domain.event.OrderConfirmed;
+import com.roykhan.dddorderboundary.order.domain.event.OrderExpired;
+import com.roykhan.dddorderboundary.order.domain.event.OrderPaymentFailed;
+import com.roykhan.dddorderboundary.order.domain.event.OrderPlaced;
 import com.roykhan.dddorderboundary.order.domain.model.Order;
 import com.roykhan.dddorderboundary.order.domain.model.OrderItem;
 import com.roykhan.dddorderboundary.order.domain.model.OrderStatus;
@@ -45,7 +50,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 // 재고 수량의 변화는 StockApplicationServiceTest, 포트를 유스케이스로 옮기는 일은 StockAdapterTest 가 확인한다.
 // 여기서는 주문 상태 전이와, 그 결과로 어떤 주문 ID 의 예약을 확정·해제하도록 요청하는지만 본다
 @ExtendWith(MockitoExtension.class)
-@DisplayName("OrderApplicationService 단위 테스트")
+@DisplayName("OrderCommandService 단위 테스트")
 class OrderApplicationServiceTest {
 
     private static final int EXPIRE_MINUTES = 10;
@@ -59,8 +64,11 @@ class OrderApplicationServiceTest {
     @Mock
     private StockPort stockPort;
 
+    @Mock
+    private OrderEventPublisher eventPublisher;
+
     @InjectMocks
-    private OrderApplicationService orderService;
+    private OrderCommandService orderService;
 
     @Captor
     private ArgumentCaptor<Order> orderCaptor;
@@ -70,6 +78,9 @@ class OrderApplicationServiceTest {
 
     @Captor
     private ArgumentCaptor<LocalDateTime> expireAtCaptor;
+
+    @Captor
+    private ArgumentCaptor<OrderPlaced> placedCaptor;
 
     @BeforeEach
     void setUp() {
@@ -135,6 +146,23 @@ class OrderApplicationServiceTest {
             assertThat(saved.getOrderStatus()).isEqualTo(OrderStatus.PENDING);
             assertThat(saved.getConfirmedAt()).isNull();
             assertThat(saved.getCancelledAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("예약까지 마친 주문을 OrderPlaced 로 알린다 — 읽기 모델이 그릴 수 있도록 항목까지 싣는다")
+        void 주문_생성_이벤트() {
+            given(productPort.findAll(List.of(1L))).willReturn(List.of(product(1L, "글렌피딕 12년", "89000.00")));
+            givenOrderSaveAssignsId(42L);
+
+            orderService.createOrder(command(7L, line(1L, 2)));
+
+            verify(eventPublisher).publish(placedCaptor.capture());
+            OrderPlaced event = placedCaptor.getValue();
+            assertThat(event.orderId()).isEqualTo(42L);
+            assertThat(event.memberId()).isEqualTo(7L);
+            assertThat(event.totalPrice()).isEqualByComparingTo("178000.00");
+            assertThat(event.items()).containsExactly(
+                new OrderPlaced.Item(1L, "글렌피딕 12년", new BigDecimal("89000.00"), 2));
         }
 
         @Test
@@ -248,7 +276,7 @@ class OrderApplicationServiceTest {
                 .isEqualTo(OrderLookupErrorCode.INVALID_ORDER_ITEM);
 
             verify(orderRepository, never()).save(any());
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
 
         // 재고 레코드의 존재는 재고 컨텍스트가 예약하면서 확인한다
@@ -276,6 +304,9 @@ class OrderApplicationServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(StockPortErrorCode.STOCK_NOT_ENOUGH);
+
+            // 예약이 실패하면 주문도 되돌아가므로 알리지 않는다
+            verifyNoInteractions(eventPublisher);
         }
     }
 
@@ -294,6 +325,7 @@ class OrderApplicationServiceTest {
             assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.CANCELLED);
             assertThat(order.getCancelledAt()).isNotNull();
             verify(stockPort).cancel(1L);
+            verify(eventPublisher).publish(new OrderCancelled(1L, order.getCancelledAt()));
         }
 
         @Test
@@ -307,7 +339,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderLookupErrorCode.ORDER_NOT_FOUND);
 
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
 
         @Test
@@ -321,7 +353,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CANCELLED);
 
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
 
         @Test
@@ -335,7 +367,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_EXPIRED);
 
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
 
         @Test
@@ -349,7 +381,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
 
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
 
         @Test
@@ -362,7 +394,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_PAYMENT_FAILED);
 
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
     }
 
@@ -382,6 +414,7 @@ class OrderApplicationServiceTest {
             assertThat(order.getConfirmedAt()).isNotNull();
             assertThat(order.getCancelledAt()).isNull();
             verify(stockPort).confirm(1L);
+            verify(eventPublisher).publish(new OrderConfirmed(1L, order.getConfirmedAt()));
         }
 
         @Test
@@ -394,7 +427,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderLookupErrorCode.ORDER_NOT_FOUND);
 
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
 
         @Test
@@ -407,7 +440,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
 
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
 
         @Test
@@ -420,7 +453,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_PAYMENT_FAILED);
 
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
 
         // 만료 스케줄러가 아직 돌지 않아 주문은 PENDING 이지만 예약의 결제 마감은 지난 경우.
@@ -435,6 +468,7 @@ class OrderApplicationServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(StockPortErrorCode.STOCK_RESERVATION_EXPIRED);
+            verifyNoInteractions(eventPublisher);
         }
     }
 
@@ -454,6 +488,7 @@ class OrderApplicationServiceTest {
             assertThat(order.getCancelledAt()).isNotNull();
             assertThat(order.getConfirmedAt()).isNull();
             verify(stockPort).cancel(1L);
+            verify(eventPublisher).publish(new OrderPaymentFailed(1L, order.getCancelledAt()));
         }
 
         @Test
@@ -466,7 +501,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderLookupErrorCode.ORDER_NOT_FOUND);
 
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
 
         @Test
@@ -479,7 +514,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
 
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
 
         @Test
@@ -527,6 +562,7 @@ class OrderApplicationServiceTest {
             assertThat(order.getOrderStatus()).isEqualTo(OrderStatus.EXPIRED);
             assertThat(order.getCancelledAt()).isNotNull();
             verify(stockPort).expire(1L);
+            verify(eventPublisher).publish(new OrderExpired(1L, order.getCancelledAt()));
         }
 
         @Test
@@ -551,7 +587,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderLookupErrorCode.ORDER_NOT_FOUND);
 
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
 
         // 스케줄러가 ID 를 읽은 뒤 결제가 먼저 끝난 경우
@@ -565,7 +601,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CONFIRMED);
 
-            verifyNoInteractions(stockPort);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
 
         @Test
@@ -578,47 +614,7 @@ class OrderApplicationServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(OrderErrorCode.ORDER_ALREADY_CANCELLED);
 
-            verifyNoInteractions(stockPort);
-        }
-    }
-
-    @Nested
-    @DisplayName("findById")
-    class FindById {
-
-        @Test
-        @DisplayName("주문을 항목까지 담아 OrderInfo 로 반환한다")
-        void 조회_성공() {
-            Order order = Order.create(7L, LocalDateTime.now().plusMinutes(EXPIRE_MINUTES));
-            order.addItem(1L, "글렌피딕 12년", new BigDecimal("89000.00"), 2);
-            ReflectionTestUtils.setField(order, "id", 1L);
-            given(orderRepository.findById(1L)).willReturn(Optional.of(order));
-
-            OrderInfo info = orderService.findById(1L);
-
-            assertThat(info.id()).isEqualTo(1L);
-            assertThat(info.memberId()).isEqualTo(7L);
-            assertThat(info.orderStatus()).isEqualTo(OrderStatus.PENDING);
-            assertThat(info.totalPrice()).isEqualByComparingTo("178000.00");
-            assertThat(info.items()).singleElement().satisfies(item -> {
-                assertThat(item.productId()).isEqualTo(1L);
-                assertThat(item.productName()).isEqualTo("글렌피딕 12년");
-                assertThat(item.unitPrice()).isEqualByComparingTo("89000.00");
-                assertThat(item.quantity()).isEqualTo(2);
-                assertThat(item.amount()).isEqualByComparingTo("178000.00");
-            });
-        }
-
-        @Test
-        @DisplayName("주문이 없으면 ORDER_NOT_FOUND 로 실패한다")
-        void 조회_실패() {
-            given(orderRepository.findById(99L)).willReturn(Optional.empty());
-
-            assertThatThrownBy(() -> orderService.findById(99L))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage(OrderLookupErrorCode.ORDER_NOT_FOUND.getMessage())
-                .extracting("errorCode")
-                .isEqualTo(OrderLookupErrorCode.ORDER_NOT_FOUND);
+            verifyNoInteractions(stockPort, eventPublisher);
         }
     }
 }
