@@ -16,7 +16,7 @@
 | 3 | 분산 시스템 설계 (CQRS, Event-Driven, ACL, Saga) | |
 | 4 | Kafka & gRPC 실습 | |
 
-현재 진행 상황: **섹션 3** — 세 컨텍스트를 헥사고날(Ports & Adapters) 구조로 옮기고 DB 도 컨텍스트마다 자기 스키마를 갖도록 나눈 뒤([섹션 2 기록](#헥사고날-전환-계획)), ACL(1단계) · Event-Driven(2단계) · CQRS 읽기 모델(3단계)까지 적용했고, 이제 설계 의도를 문서로 정리합니다 ([작업 순서](#섹션-3-작업-순서))
+현재 진행 상황: **섹션 3** — 세 컨텍스트를 헥사고날(Ports & Adapters) 구조로 옮기고 DB 도 컨텍스트마다 자기 스키마를 갖도록 나눈 뒤([섹션 2 기록](#헥사고날-전환-계획)), ACL · Event-Driven · CQRS 를 결제 흐름 하나에 엮어 적용했습니다 ([섹션 3 미션](#섹션-3-미션), [작업 순서](#섹션-3-작업-순서))
 
 ---
 
@@ -210,6 +210,7 @@ src/main/java/com/roykhan/dddorderboundary
 src/main/resources/static/payment.html    # 목업 결제 페이지
 docs/섹션1                                # 섹션 1 미션 산출물 (설계 문서)
 docs/섹션2                                # 섹션 2 미션 산출물 (의존 분석, 영역 분리, 외부 기술 의존) + 데모 시나리오
+docs/섹션3                                # 섹션 3 미션 산출물 (ACL, Event-Driven, CQRS) + 데모 시나리오
 ```
 
 컨텍스트마다 `domain` · `application/port/{in,out}` · `application/service` · `adapter/{in,out}` 으로 나눕니다. 패키지 이름만 봐도 호출 방향이 보이도록, 들어오는 쪽은 `in`, 나가는 쪽은 `out` 으로 모았습니다. 다른 컨텍스트는 자기 출력 포트로만 부르고, 그 포트를 구현하는 `adapter/out` 의 어댑터만 상대 컨텍스트를 압니다. 전환 순서와 컨텍스트별 포트·어댑터, 컨텍스트 사이 호출 관계는 [헥사고날 전환 계획](#헥사고날-전환-계획)에 정리했습니다.
@@ -272,11 +273,11 @@ OrderCommandService.confirmOrder(orderId)
 
 - 주문 상태 검사에 걸리면 재고 쪽은 호출하지 않습니다. 예약 쪽에서 예외가 나면(`RESERVATION_EXPIRED` 등) 트랜잭션이 함께 되돌아가 주문 상태도 원래대로 남습니다.
 - 예약 주체는 다른 컨텍스트의 주문이라 객체 그래프로 묶어 두면 컨텍스트를 나눌 때 통째로 뜯어야 합니다. ID 로만 참조하면 지금의 서비스 호출이 헥사고날 전환에서 그대로 재고 출력 포트가 되고, 섹션 3 에서 네트워크 호출로 바꿔도 주문 도메인은 바뀌지 않습니다.
-- 재고 레코드가 있는지는 주문이 아니라 재고 쪽이 예약하면서 확인합니다. 상품은 있는데 재고가 없으면 `404 STOCK_NOT_FOUND` 가 나갑니다.
+- 재고 레코드가 있는지는 주문이 아니라 재고 쪽이 예약하면서 확인합니다. 상품은 있는데 재고가 없으면 상품 컨텍스트의 `STOCK_NOT_FOUND` 가 주문의 `400 ORDER_ITEM_NOT_ORDERABLE` 로 번역되어 나갑니다 (ACL).
 
 재고 조회의 예약 수량은 따로 저장하지 않고 `총 재고 - 가용 수량` 으로 계산합니다. 예약은 가용 수량만, 확정은 총 재고만 줄이므로 둘의 차이가 곧 확정을 기다리는 수량입니다.
 
-결제 마감(`expireAt`)이 지난 예약은 결제에 성공해도 `RESERVATION_EXPIRED` 로 거절합니다. 반대로 결제 실패는 마감 이후에도 받아 재고를 돌려줍니다. 마감이 지나고 스케줄러가 돌기 전까지의 짧은 구간에서 두 경우가 갈립니다.
+결제 마감(`expireAt`)이 지난 예약은 결제에 성공해도 `RESERVATION_EXPIRED` 로 거절합니다(주문 쪽에서는 `STOCK_RESERVATION_EXPIRED`, 결제 이벤트로 받았으므로 로그로만 남습니다). 반대로 결제 실패는 마감 이후에도 받아 재고를 돌려줍니다. 마감이 지나고 스케줄러가 돌기 전까지의 짧은 구간에서 두 경우가 갈립니다.
 
 만료 스케줄러(`OrderExpirationScheduler`)는 `order.reservation.expire-check-interval`(기본 30초)마다 결제 마감이 지난 `PENDING` 주문을 마감이 이른 순으로 최대 100건씩 만료시킵니다.
 
@@ -315,12 +316,12 @@ OrderCommandService.confirmOrder(orderId)
 | 만료된 주문을 취소 | 409 | `ORDER_ALREADY_EXPIRED` |
 | 확정된 주문을 취소 | 409 | `ORDER_ALREADY_CONFIRMED` |
 | 결제에 실패한 주문을 취소 | 409 | `ORDER_PAYMENT_FAILED` |
-| 재고 부족 | 409 | `OUT_OF_STOCK` |
-| 수량이 1 미만 | 400 | `INVALID_QUANTITY` |
-| 재고를 찾을 수 없음 | 404 | `STOCK_NOT_FOUND` |
-| 확정할 수 없는 상태의 예약 | 409 | `RESERVATION_NOT_CONFIRMABLE` |
-| 해제할 수 없는 상태의 예약 | 409 | `RESERVATION_NOT_CANCELLABLE` |
-| 만료된 예약을 확정 | 409 | `RESERVATION_EXPIRED` |
+| 주문 수량만큼 재고가 없음 *(재고 관련 코드는 상품 컨텍스트의 코드를 주문의 언어로 번역한 것, [ACL](docs/섹션3/ACL-번역-계층.md))* | 409 | `STOCK_NOT_ENOUGH` |
+| 주문할 수 없는 항목 (재고 행 없음 등) | 400 | `ORDER_ITEM_NOT_ORDERABLE` |
+| 재고 예약이 만료되어 처리할 수 없음 | 409 | `STOCK_RESERVATION_EXPIRED` |
+| 재고 예약을 변경할 수 없는 상태 | 409 | `STOCK_RESERVATION_NOT_CHANGEABLE` |
+| 번역표에 없는 재고 실패 | 500 | `STOCK_PORT_FAILED` |
+| 재고 조회 API 에서 재고를 찾을 수 없음 | 404 | `STOCK_NOT_FOUND` |
 
 > 결제 API 는 주문의 에러 코드를 받지 않습니다. 이미 취소·만료된 주문에 결제 결과가 와도 결제 응답은 성공이고, 주문이 반영을 거절한 사실은 주문 쪽 로그(`결제 결과 반영 거절`)로만 남습니다 ([2단계](#2단계--eda-결제--주문)).
 
@@ -590,7 +591,7 @@ PaymentApplicationService
 | 1 | **ACL — 주문 → 상품** 재고 포트가 흘리던 상품 컨텍스트의 에러 코드를 주문의 언어로 번역한다 | 완료 |
 | 2 | **EDA — 결제 → 주문** 결제가 결과를 이벤트로 발행하고 주문이 입력 어댑터에서 번역해 받는다. `OrderAdapter` 제거 | 완료 |
 | 3 | **CQRS — 주문 읽기 모델** 주문 이벤트로 읽기 모델을 갱신하고 조회는 거기서 한다 | 완료 |
-| 4 | 적용한 패턴과 설계 의도를 README 와 `docs/섹션3` 에 정리 | |
+| 4 | 적용한 패턴과 설계 의도를 README 와 `docs/섹션3` 에 정리 ([섹션 3 미션](#섹션-3-미션)) | 완료 |
 
 순서는 위험도 순입니다. ACL 은 앞뒤 의존이 없어 1단계에서 끝나지만, CQRS 읽기 모델은 2단계의 이벤트 위에 올라갑니다.
 
@@ -757,6 +758,46 @@ OrderController ─ POST·PATCH                             OrderController ─ 
 | [Domain / Application / Adapter 영역으로 역할 분리](docs/섹션2/Domain-Application-Adapter-영역으로-역할-분리.md) | 영역별 역할, 컨텍스트별 포트와 어댑터, 전환 과정 6단계, import 기반 의존 방향 검증 |
 | [핵심 도메인이 외부 기술에 직접 의존하지 않도록 구조 개선](docs/섹션2/핵심-도메인이-외부-기술에-직접-의존하지-않도록-구조-개선.md) | 개선한 의존, 영역별 외부 기술 현황, JPA 애너테이션을 남긴 트레이드오프와 HTTP 상태의 한계 |
 | [데모 시나리오](docs/섹션2/데모.http) | 상품 등록 → 주문 → 결제 확정·실패 → 취소 → 예약 만료를 순서대로 호출하는 IntelliJ HTTP Client 파일 |
+
+---
+
+## 섹션 3 미션
+
+| 미션 | 결과 |
+|---|---|
+| CQRS · Event-Driven · ACL 을 적용해 직접 소스를 작성한다 | **충족** — 결제 흐름 하나에 세 패턴을 엮었다 ([작업 순서](#섹션-3-작업-순서)) |
+| 각 패턴이 코드 구조에서 명확하게 구분되도록 한다 | **충족** — 패턴마다 패키지·클래스 이름에 자리가 있다 (아래 표). 다른 컨텍스트를 import 하는 파일은 주문의 어댑터 4개뿐이다 |
+| 단순 예제가 아닌 주문 도메인을 기준으로 한다 | **충족** — 섹션 1~2 에서 만든 주문·재고 예약·목업 결제 위에 적용했다 |
+| GitHub 에 업로드하고 Repository 주소를 제출한다 | 이 저장소 — 단계마다 브랜치와 PR 로 나눠 올렸다 |
+| README 에 적용한 패턴과 설계 의도를 작성한다 | 아래 [적용한 패턴과 설계 의도](#적용한-패턴과-설계-의도) |
+
+### 적용한 패턴과 설계 의도
+
+```text
+결제 성공
+ └─ [EDA]  결제가 PaymentSucceeded 를 발행한다 — 주문을 직접 부르지 않는다
+     └─ [ACL] 주문의 입력 어댑터가 그 이벤트를 주문의 언어로 번역해 받는다
+         └─ 주문 확정 (재고 예약 확정은 [ACL] 재고 포트를 거쳐 상품 컨텍스트로)
+             └─ [EDA] OrderConfirmed 발행
+                 └─ [CQRS] 그 이벤트로 주문 읽기 모델이 갱신되고, 조회는 읽기 모델에서만 한다
+```
+
+| 패턴 | 코드의 자리 | 설계 의도 |
+|---|---|---|
+| **ACL** | `order/adapter/out/product/acl/StockErrorTranslator` · `order/adapter/in/payment/PaymentEventListener` | 다른 컨텍스트의 언어(에러 코드, 이벤트)가 주문 안으로도, 주문 API 응답으로도 새지 않게 한다. 번역하는 곳을 어댑터 한 군데로 모아, 상대가 바뀌어도 그곳만 고친다 |
+| **Event-Driven** | `*/domain/event` (계약) · `*/application/port/out/*EventPublisher` (포트) · `*/adapter/out/event` (발행) · `*/adapter/in/**/*EventListener` (수신) | 결제는 받는 쪽을 모르고 사실만 알린다. 커밋된 사실만 전달하고(`AFTER_COMMIT`), 받는 쪽의 실패는 보내는 쪽으로 돌아가지 않는다. 섹션 4 에서 Kafka 로 바꿀 때는 발행 어댑터만 교체한다 |
+| **CQRS** | 쓰기 `OrderCommandUseCase` · `OrderCommandService` · `orders.orders` / 읽기 `OrderQueryUseCase` · `OrderQueryService` · `OrderProjectionService` · `orders.order_view` | 포트 이름만 나누지 않고 저장소까지 나눴다. 쓰기는 상태를 바꾸고 이벤트만 발행하고, 조회는 이벤트로 갱신되는 읽기 모델만 읽는다. 대가로 결과적 일관성이 생긴다 |
+
+- 이벤트 계약은 발행하는 컨텍스트가 소유하고 받는 쪽이 번역합니다. `common/event` 같은 공유 커널로 두면 컨텍스트가 같은 모양에 묶이고 ACL 을 둘 자리가 사라집니다
+- 전달은 스프링 인프로세스 이벤트이고, 리스너는 끝난 트랜잭션에 합류하지 않도록 `NOT_SUPPORTED` 로 떼어 냅니다. 이 설정을 빼면 통합 테스트가 실패합니다
+- 남은 한계: 결제 성공인데 주문이 받지 못한 경우의 보상(Saga), 비동기 전달의 발행 보장(Outbox)·중복 처리, 읽기 모델 재구축
+
+| 문서 | 내용 |
+|---|---|
+| [ACL — 번역 계층](docs/섹션3/ACL-번역-계층.md) | 번역하는 자리 세 곳, 재고 예외 번역표, 결제 이벤트 번역, 출력 방향부터 시작한 이유 |
+| [Event-Driven — 결제에서 주문으로](docs/섹션3/Event-Driven-결제에서-주문으로.md) | 전환 전후 비교, 이벤트 목록, 발행·전달 구조, `AFTER_COMMIT` 과 `NOT_SUPPORTED`, 비동기에서 새로 필요한 것 |
+| [CQRS — 주문 읽기 모델](docs/섹션3/CQRS-주문-읽기-모델.md) | 쓰기·읽기 구조와 비교표, 이벤트 → 읽기 모델 매핑, 결과적 일관성과 한계 |
+| [데모 시나리오](docs/섹션3/데모.http) | 주문 → 결제 성공·실패 → 취소 후 결제 → 재고 부족을 호출하며 세 패턴을 확인하는 IntelliJ HTTP Client 파일 |
 
 ---
 
