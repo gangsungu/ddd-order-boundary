@@ -1,0 +1,158 @@
+### 섹션 3 데모 시나리오 — ACL · Event-Driven · CQRS
+### IntelliJ HTTP Client 로 위에서부터 순서대로 실행 (빈 DB 기준)
+### 재고 확인 주석은 "총 재고 / 가용 / 예약" 순서
+### 서버 로그에서 이벤트 흐름을 함께 본다: "결제 결과 반영", "결제 결과 반영 거절"
+
+@host = http://localhost:8080
+
+# 상품 등록 응답에는 본문 데이터가 없으므로 등록 후 부여되는 ID 를 직접 적는다
+@productId = 1
+
+###############################################################################
+# 0. 준비 — 상품 등록
+###############################################################################
+
+### 상품 등록 (초기 재고 10)
+POST {{host}}/api/product
+Content-Type: application/json
+
+{
+  "name": "글렌피딕 12년",
+  "description": "싱글몰트 스카치 위스키 700ml",
+  "price": 89000,
+  "initialQuantity": 10
+}
+
+###############################################################################
+# 1. CQRS — 주문 생성(쓰기) 후 읽기 모델에서 조회
+#    쓰기는 주문 ID 만 돌려주고, 조회 응답은 OrderPlaced 로 만들어진 orders.order_view 에서 나온다
+###############################################################################
+
+### 주문 생성 — OrderPlaced 발행 → 커밋 뒤 읽기 모델 생성
+POST {{host}}/api/order
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "items": [
+    { "productId": {{productId}}, "quantity": 2 }
+  ]
+}
+
+> {% client.global.set("orderId", response.body.data.orderId); %}
+
+### 주문 조회 — PENDING, 주문 시점 상품명·단가·금액 (읽기 모델)
+GET {{host}}/api/order/{{orderId}}
+
+###############################################################################
+# 2. Event-Driven — 결제는 이벤트만 발행하고, 주문이 받아서 확정한다
+#    결제 → PaymentSucceeded → PaymentEventListener → confirmOrder → OrderConfirmed → 읽기 모델
+###############################################################################
+
+### 결제 성공
+# 브라우저 데모: {{host}}/payment.html?orderId={{orderId}} 에서 [결제 성공]
+POST {{host}}/api/payment/{{orderId}}/result
+Content-Type: application/json
+
+{
+  "result": "SUCCESS"
+}
+
+### 주문 조회 — CONFIRMED, confirmedAt (이벤트 두 번을 건너 읽기 모델까지 반영)
+GET {{host}}/api/order/{{orderId}}
+
+### 재고 확인 — 8 / 8 / 0 (예약이 확정되며 총 재고 차감)
+GET {{host}}/api/product/{{productId}}/stock
+
+###############################################################################
+# 3. Event-Driven — 결제 실패도 이벤트로, 주문이 예약을 해제한다
+###############################################################################
+
+### 주문 생성 (3개)
+POST {{host}}/api/order
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "items": [
+    { "productId": {{productId}}, "quantity": 3 }
+  ]
+}
+
+> {% client.global.set("failOrderId", response.body.data.orderId); %}
+
+### 결제 실패 — PaymentFailed → failPayment → OrderPaymentFailed
+POST {{host}}/api/payment/{{failOrderId}}/result
+Content-Type: application/json
+
+{
+  "result": "FAILURE"
+}
+
+### 주문 조회 — PAYMENT_FAILED, cancelledAt
+GET {{host}}/api/order/{{failOrderId}}
+
+### 재고 확인 — 8 / 8 / 0 으로 원복
+GET {{host}}/api/product/{{productId}}/stock
+
+###############################################################################
+# 4. ACL — 주문의 거절은 결제로 새지 않는다
+#    섹션 2 에서는 409 ORDER_ALREADY_CANCELLED 가 결제 API 응답으로 나갔다
+###############################################################################
+
+### 주문 생성 후 바로 취소
+POST {{host}}/api/order
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "items": [
+    { "productId": {{productId}}, "quantity": 1 }
+  ]
+}
+
+> {% client.global.set("cancelOrderId", response.body.data.orderId); %}
+
+### 주문 취소 — OrderCancelled → 읽기 모델 CANCELLED
+PATCH {{host}}/api/order/{{cancelOrderId}}/cancel
+
+### 취소된 주문에 결제 성공 — 결제 API 는 200. 서버 로그에 "결제 결과 반영 거절 ... code=ORDER_ALREADY_CANCELLED"
+POST {{host}}/api/payment/{{cancelOrderId}}/result
+Content-Type: application/json
+
+{
+  "result": "SUCCESS"
+}
+
+### 주문 조회 — 여전히 CANCELLED
+GET {{host}}/api/order/{{cancelOrderId}}
+
+###############################################################################
+# 5. ACL — 상품 컨텍스트의 에러 코드는 주문의 언어로 번역된다
+#    섹션 2 에서는 상품의 OUT_OF_STOCK 이 주문 API 응답으로 그대로 나갔다
+###############################################################################
+
+### 재고보다 많은 수량 주문 — 409 STOCK_NOT_ENOUGH
+POST {{host}}/api/order
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "items": [
+    { "productId": {{productId}}, "quantity": 999 }
+  ]
+}
+
+### 없는 상품 주문 — 400 INVALID_ORDER_ITEM (상품 조회 결과로 주문 서비스가 판단)
+POST {{host}}/api/order
+Content-Type: application/json
+
+{
+  "memberId": 1,
+  "items": [
+    { "productId": 99999, "quantity": 1 }
+  ]
+}
+
+### 없는 주문 조회 — 404 ORDER_NOT_FOUND (읽기 모델에 없음)
+GET {{host}}/api/order/99999
